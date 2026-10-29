@@ -1,6 +1,6 @@
-import { chainsForSelection, formatChainLine } from "@/src/core";
+import { chainsForSelection, formatChainLine, walkTopics } from "@/src/core";
 import { newGraphContextMessage, type GraphContextPick } from "@/src/core";
-import { compactionInFlight, createChat, isTurnRunning, listChats, readSettingsRecord, stores, titleFromPrompt } from "@/src/server";
+import { compactionInFlight, createChat, getScope, isTurnRunning, listChats, readSettingsRecord, stores, titleFromPrompt } from "@/src/server";
 import type { ChatListItem } from "@/src/core";
 
 /** The session picker's list: record-derived summaries (phase, pending
@@ -20,12 +20,32 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-	const body = (await req.json().catch(() => ({}))) as { title?: unknown; kind?: unknown; graphContext?: unknown };
+	const body = (await req.json().catch(() => ({}))) as { title?: unknown; kind?: unknown; scopeId?: unknown; classRootId?: unknown; graphContext?: unknown };
 	const title = typeof body.title === "string" ? body.title : "";
 	// Practice sessions (owner, 2026-10-04): kind "practice" marks the
 	// record — the practice agent + its tools from turn 1, no extraction.
-	const kind = body.kind === "practice" ? ("practice" as const) : undefined;
-	const chat = createChat(titleFromPrompt(title || "Untitled session"), kind);
+	// Scope sessions (fork 2026-01-26): kind "scope" + optional scopeId —
+	// a session opened against an EXISTING scope (refinement); blank ones
+	// create their scope in-turn (the scoper's scope_create). Classes
+	// (ADR 0003): kind "class" + REQUIRED scopeId + optional classRootId
+	// (the subtree anchor; absent = the whole scope) — validated against
+	// the scope here, the only writer-side gate.
+	const kind = body.kind === "practice" ? ("practice" as const) : body.kind === "scope" ? ("scope" as const) : body.kind === "class" ? ("class" as const) : undefined;
+	const scopeId = typeof body.scopeId === "string" && body.scopeId ? body.scopeId : undefined;
+	let classRootId: string | undefined;
+	if (kind === "class") {
+		if (!scopeId) {
+			return Response.json({ error: "A Class needs a scopeId — start it from a scope." }, { status: 400 });
+		}
+		const scope = getScope(scopeId);
+		if (!scope) return Response.json({ error: "Unknown scope." }, { status: 404 });
+		const rootId = typeof body.classRootId === "string" && body.classRootId ? body.classRootId : undefined;
+		if (rootId && !walkTopics(scope.roots).some((t) => t.id === rootId)) {
+			return Response.json({ error: "classRootId is not a topic of this scope." }, { status: 400 });
+		}
+		classRootId = rootId;
+	}
+	const chat = createChat(titleFromPrompt(title || "Untitled session"), kind, scopeId, classRootId);
 	// PER-SESSION MODELS (owner, 2026-09-28): a session owns its model +
 	// thinking level from birth — stamped verbatim from the STRONG slot,
 	// the new-session default. From here the strong slot never reaches

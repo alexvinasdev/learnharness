@@ -18,18 +18,6 @@
  * to the tool part of their call (searching backward — an answered quiz's
  * result lands on the part that asked it, even turns later); a group's id is
  * its FIRST assistant message's id.
- *
- * Plan blocks: a plan-block marker has no message of its own — its data part
- * splices into the preceding assistant group, IN FLOW right after the last
- * successful plan_init call (the presentation moment).
- *
- * Question tools on the wire (owner fork 2): the agent's closing
- * tool_execution_end carries the in-memory "Question posed" placeholder —
- * projectView IGNORES clean question executions (the part stays
- * input-available; the learner's answer arrives as a real toolResult). The
- * placeholder never persists, so settled records never see it.
- *
- * Pure and deterministic: client-safe (no node deps), same input → same view.
  */
 
 import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
@@ -38,7 +26,6 @@ import { modelSolutionForConclude, PRACTICE_CONCLUDE_TOOL, problemInputForConclu
 import { activeCompactionOf, type CompactionDetails } from "./compaction.ts";
 import { QUESTION_TOOLS } from "./pending.ts";
 import type { SubagentArtifactData, SubagentResultMeta } from "./contracts/jobs.ts";
-import type { PlanBlockData } from "./contracts/chat.ts";
 
 /** A view part — the loose part vocabulary the renderers consume (the same
  *  shape names the pre-Wave-D UIMessage dialect used, so the renderer
@@ -109,16 +96,6 @@ function applyResult(part: LhViewPart, result: ToolResultMessage): void {
 	}
 }
 
-/** Does this assistant group carry a successful plan_init (the splice target)? */
-function lastSuccessfulPlanInit(parts: LhViewPart[]): number {
-	let idx = -1;
-	parts.forEach((p, i) => {
-		if (p.type !== "tool-plan_init") return;
-		const ok = (p.output as { ok?: unknown } | undefined)?.ok;
-		if (ok === true) idx = i;
-	});
-	return idx;
-}
 
 /** Project the native record (+ live turn working list) into the client's
  *  view messages. Pure: the same input always projects to the same list. */
@@ -367,7 +344,7 @@ function applyResultTo(part: LhViewPart | undefined, result: ToolResultMessage):
 	// rendered nothing) is dropped from the view — the record keeps it.
 }
 
-/** A marker's projected message (handoff/steers) or splice (plan block). */
+/** A marker's projected message (handoff/steers). */
 function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[]): void {
 	switch (marker.customType) {
 		case "graph-context": {
@@ -466,17 +443,6 @@ function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[]): void {
 				},
 				],
 			});
-			return;
-		}
-		case "plan-block": {
-			// No message of its own: splice into the preceding assistant
-			// group, IN FLOW after the last successful plan_init call.
-			const group = out[out.length - 1];
-			if (!group || group.role !== "assistant") return;
-			const idx = lastSuccessfulPlanInit(group.parts);
-			if (idx === -1) return;
-			const { block } = marker.details as { planCallId: string; block: PlanBlockData };
-			group.parts.splice(idx + 1, 0, { type: "data-plan-block", id: marker.id, data: block });
 			return;
 		}
 	}

@@ -55,6 +55,7 @@ export function ReadingThinkingField({
 				Thinking while reading
 			</div>
 			<textarea
+					suppressHydrationWarning /* grammar-checker extensions stamp inputs pre-hydration (2026-11) */
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
 				/* py-0.5 (owner round, 2026-10-07): the scrollbar fix. Source

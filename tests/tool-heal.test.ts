@@ -33,8 +33,6 @@ import {
 } from "../src/core/question-core.ts";
 import { parseQuizInput } from "../src/core/tool-parts.ts";
 import { resolveTargetId } from "../src/core/chains.ts";
-import { bareQuestionTools } from "../src/agent/teacher-agent.ts";
-import { probeQuizTool } from "../src/agent/tools.ts";
 
 /** The incident's exact encoding: the value wrapped in literal quotes. */
 function QUOTED(value: string): string {
@@ -89,32 +87,8 @@ describe("the death-loop shape — quiz type with quotes baked in", () => {
 		assert.equal((validated as { type: unknown }).type, "predict");
 	});
 
-	it("WIRING: bareQuestionTools (the registry with NO prepareArguments) now heals", () => {
-		const tools = bareQuestionTools();
-		const quiz = tools.quiz;
-		assert.ok(quiz, "the bare quiz must exist");
-		assert.ok(quiz.prepareArguments, "the bare quiz must carry the standard heal");
-		const healed = quiz.prepareArguments!(
-			whiteheadQuiz(QUOTED("predict"), ["parmenides"]),
-		) as { type: unknown };
-		assert.equal(healed.type, "predict");
-	});
-
-	it("WIRING: the 2026-09-26 string-options shape heals through the bare quiz too", () => {
-		// The universal heal covers the ORIGINAL incident's shape as well:
-		// options serialized as a JSON string (then healed only on the
-		// plan-tree quiz path; the bare registries had nothing).
-		const quiz = bareQuestionTools().quiz;
-		assert.ok(quiz?.prepareArguments, "the bare quiz must carry the standard heal");
-		const input = whiteheadQuiz("predict", ["parmenides"]);
-		const stringified = { ...input, options: JSON.stringify(input.options) };
-		const healed = quiz.prepareArguments!(stringified) as { options: unknown };
-		assert.ok(Array.isArray(healed.options), "the JSON string heals to the array");
-		assert.equal(
-				(healed.options as Array<{ value?: string }>)[0]?.value,
-			"parmenides",
-		);
-	});
+	// The bare-registry WIRING tests died with the quiz tools (2026-02);
+	// the pure heal laws above stay (history rendering heals at display).
 });
 
 describe("the colon shape — correctAnswer with copy-syntax debris", () => {
@@ -154,26 +128,6 @@ describe("the colon shape — correctAnswer with copy-syntax debris", () => {
 	});
 });
 
-describe("the calculus retry loop — an exact answer was incorrectly stripped", () => {
-	it("the real probe tool accepts a label with its sentence-final period", async () => {
-		const input = {
-			question: "Which claim?",
-			options: [{ label: "The claim holds." }, { label: "The claim need not hold." }],
-			explanation: "The premise does not imply the claim.",
-			correctAnswer: "The claim need not hold.",
-		};
-		const validated = validateToolArguments(probeQuizTool, {
-			type: "toolCall",
-			id: "calculus-period",
-			name: "probe",
-			arguments: probeQuizTool.prepareArguments!(input),
-		});
-		assert.equal(validated.correctAnswer, input.correctAnswer);
-		const result = await probeQuizTool.execute("calculus-period", validated);
-		assert.notEqual(result.isError, true, "an already-exact answer must not trigger a retry");
-		assert.equal(result.terminate, true, "the valid question is posed normally");
-	});
-});
 
 describe("the display mirror — raw records heal on read", () => {
 	it("parseQuizInput renders the incident's persisted raw record (no invisible quiz)", () => {

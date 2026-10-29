@@ -25,6 +25,9 @@ export const PATHS = {
 	data: DATA_ROOT,
 	/** Chat sessions (AI SDK UIMessage transcripts, one JSON file per chat). */
 	chats: path.join(DATA_ROOT, "chats"),
+	/** Scopes (fork 2026-01-26): one directory per learning domain —
+	 *  scope.json, exercises.json, grind.jsonl, cheatsheets/. */
+	scopes: path.join(DATA_ROOT, "scopes"),
 	graph: path.join(DATA_ROOT, "graph"),
 	/** Debug artifacts (env-gated): data/debug/provider-events/<chatId>.jsonl
 	 * raw provider stream recordings (src/agent/provider-events.ts). */

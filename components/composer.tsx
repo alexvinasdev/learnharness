@@ -91,6 +91,7 @@ export function Composer({
 			}}
 		>
 			<textarea
+					suppressHydrationWarning /* grammar-checker extensions stamp inputs pre-hydration (2026-11) */
 				ref={inputRef}
 				value={value}
 				onChange={(e) => onChange(e.target.value)}

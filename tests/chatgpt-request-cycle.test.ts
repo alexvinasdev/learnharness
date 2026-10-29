@@ -6,7 +6,7 @@ import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import { piModels, piEngineForSpec, APP_IDENTITY } from "../src/agent/models.ts";
 import { refreshChatGPTModels, chatGPTScopeCurrent } from "../src/agent/chatgpt-bridge.ts";
 import { ChatGPTRequestCycle } from "../src/agent/chatgpt-request-cycle.ts";
-import { createTeacherAgent } from "../src/agent/teacher-agent.ts";
+import { createScoperAgent } from "../src/agent/teacher-agent.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -84,7 +84,7 @@ async function nativeRun(where: typeof cut, staged: boolean, withLearner = true,
  });
  const raw = piEngineForSpec({ provider: "chatgpt", id: model.id }, () => purpose.background, cycle);
  const engine = { ...raw, streamFn: (m: any, context: any, opts: any) => raw.streamFn(m, context, { ...opts, onPayload: async (payload: unknown) => { if (lateAutomatic && !handedLate) { handedLate = true; agent.steer(marker); } if (cut === "payload") { cut = "none"; await Promise.resolve(); revoke(); } return payload; } }) };
- const agent = createTeacherAgent(undefined, { engine, messages, chatId: "scratch-native-session", tools: withTool ? { again: { name: "again", label: "again", description: "scratch", parameters: Type.Object({}), execute: async () => { executed++; return { content: [{ type: "text" as const, text: "Done" }], details: {} }; } } } : {}, callPurpose: purpose, requestCycle: cycle, onUsage: () => usage++ });
+ const agent = createScoperAgent({ chatId: "scratch-native-session", scopeId: () => null, attachScope: () => {}, readScope: () => null, createScope: () => ({ id: "s", name: "s", objectives: [], roots: [], createdAt: "", updatedAt: "" }), writeScope: () => {}, mintTopicId: () => "t", mintObjectiveId: () => "o", now: () => "" }, { engine, messages, chatId: "scratch-native-session", tools: withTool ? { again: { name: "again", label: "again", description: "scratch", parameters: Type.Object({}), execute: async () => { executed++; return { content: [{ type: "text" as const, text: "Done" }], details: {} }; } } } : {}, callPurpose: purpose, requestCycle: cycle, onUsage: () => usage++ });
  if (!staged && !lateAutomatic) agent.steer(marker);
  if (withLearner) agent.steer(learner);
  const handle = runPiTurn({ agent, requestCycle: cycle, onFinish: (m) => { settled++; final = m; resolve(); } });

@@ -15,7 +15,7 @@ const assistant = (chars: number): LhMessage => ({ id: `a${serial++}`, role: "as
 const call = (chars: number): LhMessage => ({ ...assistant(chars), content: [{ type: "text", text: "a".repeat(chars) }, { type: "toolCall", name: "quiz", arguments: {}, id: "c" }] }) as LhMessage;
 const result = (chars: number): LhMessage => ({ id: `r${serial++}`, role: "toolResult", content: [{ type: "text", text: "r".repeat(chars) }], toolCallId: "c", toolName: "quiz", isError: false, timestamp: 1 });
 const image = (): LhMessage => ({ id: `i${serial++}`, role: "user", content: [{ type: "image", data: "fixture", mimeType: "image/png" }], timestamp: 1 });
-const metadata = (): LhMessage => ({ id: `m${serial++}`, role: "custom", customType: "plan-block", content: "invisible".repeat(1000), display: false, details: {}, timestamp: 1 });
+const metadata = (): LhMessage => ({ id: `m${serial++}`, role: "custom", customType: "problem-dismissed", content: "invisible".repeat(1000), display: false, details: {}, timestamp: 1 });
 
 test("local cutoff matches published native golden boundaries and estimator values", () => {
 	const cases: [string, LhMessage[], number, number, number[]][] = [

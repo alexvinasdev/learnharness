@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as fs from "node:fs";
 import type { LhMessage } from "../src/core/native-messages.ts";
-import { newAnswerResult, newPlanBlockMessage, newUserMessage } from "../src/core/native-messages.ts";
-import type { ToolResultMessage } from "@earendil-works/pi-ai";
+import { newAnswerResult, newUserMessage } from "../src/core/native-messages.ts";
 
 import {
 	batchRuns,
@@ -84,13 +83,7 @@ describe("messageFingerprint — what changes it, what never does", () => {
 		// Wave D: the marker is its OWN message (not a part on another one);
 		// its view is empty, so it neither re-opens others nor itself
 		// carries any learning evidence.
-		const marker = newPlanBlockMessage("call_p1", {
-			kind: "full",
-			at: "2026-09-26T00:00:00.000Z",
-			current: null,
-			nodes: [],
-			edges: [],
-		}) as LhMessage;
+		const marker = { id: "mk1", role: "user", content: "", timestamp: 1, customType: "problem-dismissed" } as never as LhMessage;
 		assert.deepEqual(messageViewLines(marker, marker.id), []);
 		// And the message it rides beside keeps its fingerprint untouched:
 		const before = messageFingerprint(teacher("t1", "the chain rule"));

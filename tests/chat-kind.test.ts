@@ -44,3 +44,23 @@ describe("session kind (practice sessions, 2026-10-04)", () => {
 		assert.equal(listed?.kind, "teach");
 	});
 });
+
+describe("session kind (Classes, ADR 0003)", () => {
+	it("createChat(kind: 'class') stamps kind + scopeId + optional classRootId", () => {
+		const chat = chatStore.createChat("Class · German", "class", "scope_1", "t_root");
+		assert.equal(chat.kind, "class");
+		assert.equal(chat.scopeId, "scope_1");
+		assert.equal(chat.classRootId, "t_root");
+	});
+
+	it("a whole-scope Class carries NO classRootId (absent = all roots)", () => {
+		const chat = chatStore.createChat("Class · whole", "class", "scope_1");
+		assert.equal(chat.kind, "class");
+		assert.equal("classRootId" in chat, false);
+	});
+
+	it("classRootId never lands on non-class kinds (the anchor is class-only)", () => {
+		const chat = chatStore.createChat("refinement", "scope", "scope_1", "t_root");
+		assert.equal("classRootId" in chat, false);
+	});
+});

@@ -37,7 +37,7 @@
  */
 
 /** The three phases of a session, as the picker / header / dividers see them. */
-export type Phase3 = "probe" | "plan" | "teach";
+export type Phase3 = "probe" | "teach";
 
 /**
  * Minimal structural slice of a UI message for the phase scan: parts with
@@ -48,16 +48,6 @@ export interface PhaseMessage {
 	parts: ReadonlyArray<{ type: string; state?: string; input?: unknown; output?: unknown }>;
 }
 
-/** A quiz call's part input carries `nodeId` iff it is tagged (teach-only —
- *  the probe quiz schema has no nodeId field). */
-function taggedNodeId(input: unknown): boolean {
-	return (
-		typeof input === "object" &&
-		input !== null &&
-		typeof (input as { nodeId?: unknown }).nodeId === "string" &&
-		(input as { nodeId: string }).nodeId.length > 0
-	);
-}
 
 /** The phase at `upToIndex` (inclusive; default: the last message). */
 export function phaseAt3(messages: readonly PhaseMessage[], upToIndex?: number): Phase3 {
@@ -81,15 +71,14 @@ function advance(
 		// not its answer — an errored-and-retried call still proves teaching
 		// began, and the retry lands in the same group anyway).
 		if (phase === "probe" && part.type === "tool-probe_done" && part.state === "output-available") {
-			phase = "plan";
+			phase = "teach";
 		}
-		// plan → teach via the first nodeId-tagged quizzing CALL — quiz OR
-		// explain, whichever mechanic the settings armed (both carry nodeId).
-		if (
-			phase === "plan" &&
-			(part.type === "tool-quiz" || part.type === "tool-explain") &&
-			taggedNodeId(part.input)
-		) {
+		// probe → teach ALSO via the first TEACH-quiz CALL (quiz OR explain,
+		// whichever mechanic the settings armed) — the probe's own quizzes
+		// are `tool-probe` parts, structurally distinct, so ANY quiz/explain
+		// part proves the teacher is speaking (fork 2026-01-26: free sessions
+		// quiz without nodeId and still derive teach).
+		if (phase === "probe" && (part.type === "tool-quiz" || part.type === "tool-explain")) {
 			phase = "teach";
 		}
 	}
@@ -121,10 +110,7 @@ export function teachStepIndex(
 			latest = i;
 			continue;
 		}
-		if (
-			(part.type === "tool-quiz" || part.type === "tool-explain") &&
-			taggedNodeId(part.input)
-		) {
+		if (part.type === "tool-quiz" || part.type === "tool-explain") {
 			// The call's governing step: 0–1 step-starts seen = the message's
 			// FIRST step → -1 (the divider belongs before the whole message);
 			// a later step → that step-start's index (the divider renders at
@@ -173,17 +159,13 @@ export function phaseAt3Lh(messages: readonly LhMessage[], upToIndex?: number): 
 				result.toolName === "probe_done" &&
 				!result.isError
 			) {
-				phase = "plan";
+				phase = "teach";
 			}
 		} else if (role === "assistant") {
 			const content = (m as { content?: ReadonlyArray<{ type?: string; name?: string; arguments?: unknown }> }).content ?? [];
-			if (phase === "plan") {
+			if (phase === "probe") {
 				for (const block of content) {
-					if (
-						block.type === "toolCall" &&
-						(block.name === "quiz" || block.name === "explain") &&
-						taggedNodeId(block.arguments)
-					) {
+					if (block.type === "toolCall" && (block.name === "quiz" || block.name === "explain")) {
 						phase = "teach";
 						break;
 					}

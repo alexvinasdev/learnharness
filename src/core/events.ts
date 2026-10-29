@@ -50,6 +50,10 @@ export interface ServerEvents {
 	 *  the chat; the client mirrors it by disabling the composer/dock
 	 *  submit. */
 	"compaction-changed": { chatId: string; running: boolean };
+	/** The scope list changed (create, delete, save — fork 2026-01-26).
+	 *  List-shape mutations only; exercise/attempt/cheatsheet writes stay
+	 *  silent (the SILENCE LAW, same reasoning as chats-changed). */
+	"scopes-changed": Record<string, never>;
 }
 
 export type ServerEventType = keyof ServerEvents;
@@ -66,6 +70,7 @@ export const SERVER_EVENT_TYPES = [
 	"subscriptions-changed",
 	"record-changed",
 	"compaction-changed",
+	"scopes-changed",
 ] as const satisfies readonly ServerEventType[];
 
 /** One notification: the type discriminates the payload. */

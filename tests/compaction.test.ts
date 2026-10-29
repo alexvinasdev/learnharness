@@ -11,7 +11,6 @@ import {
 	keptIndexFor,
 	newCompactionMarker,
 	newUserMessage,
-	planTreeToText,
 	serializeForSummary,
 	toLlmMessages,
 	COMPACTED_HISTORY_HEADER,
@@ -303,31 +302,18 @@ describe("serializeForSummary + buildCompactionPrompt", () => {
 		assert.ok(!text.toLowerCase().includes("plan-block"), "UI-only markers never serialize");
 	});
 
-	it("the prompt demands the four sections in order and carries the plan tree verbatim", () => {
-		const prompt = buildCompactionPrompt({ spanText: "TRANSCRIPT", planTreeText: "- [done] A (a1)\n- A → B", kind: "teach" });
-		const order = ["The learner's understanding", "The teaching arc", "The plan dependency tree", "The current moment"].map(
+	it("the prompt demands the three sections in order (the plan tree section died with the plan, fork 2026-01-26)", () => {
+		const prompt = buildCompactionPrompt({ spanText: "TRANSCRIPT", kind: "teach" });
+		const order = ["The learner's understanding", "The teaching arc", "The current moment"].map(
 			(s) => prompt.indexOf(s),
 		);
+		assert.ok(order.every((i) => i >= 0), "all three sections present");
 		assert.deepEqual(order, [...order].sort((a, b) => a - b), "sections appear in the ruled order");
+		assert.ok(!prompt.includes("plan dependency tree"), "the plan section is gone");
 		assert.ok(prompt.includes("TRANSCRIPT"));
-		assert.ok(prompt.includes("- [done] A (a1)"));
 	});
 
-	it("planTreeToText: statuses derive from the transcript; edges render; empty tree → null", () => {
-		assert.equal(planTreeToText(undefined, []), null);
-		const tree = {
-			nodes: [
-				{ id: "a", title: "Alpha", summary: "first" },
-				{ id: "b", title: "Beta" },
-			],
-			edges: [{ from: "a", to: "b" }],
-			version: 1,
-		};
-		const text = planTreeToText(tree as never, [])!;
-		assert.ok(text.includes("Alpha (a) — first"));
-		assert.ok(text.includes("Alpha → Beta"));
 	});
-});
 
 // ---------------------------------------------------------------------------
 // THE VIEW FOLD (owner round 14): two dividers from one marker —

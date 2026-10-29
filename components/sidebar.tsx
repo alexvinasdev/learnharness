@@ -5,8 +5,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { MenuShell } from "@/components/menu-shell";
 import { DeleteSessionDialog } from "@/components/delete-session-dialog";
+import { DeleteScopeDialog } from "@/components/delete-scope-dialog";
 import type { ChatDeleteMode } from "@/src/core";
-import { DumbbellIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, GraduationCapIcon, ListTreeIcon, PanelLeftCloseIcon, PanelLeftOpenIcon, PlusIcon, SearchIcon, SettingsIcon } from "lucide-react";
 import { ActivitySection } from "@/components/activity-dock";
 import { CoverageMenuBlock } from "@/components/extraction-coverage";
 import { LhMark } from "@/components/lh-mark";
@@ -19,7 +20,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { fuzzyScore } from "@/src/core";
 import { useServerEvent, useServerResync } from "@/components/server-events";
-import type { ChatListItem } from "@/src/core";
+import type { ChatListItem, ScopeSummary } from "@/src/core";
 import { kbdEventForAction } from "@/src/core";
 import { notifySettingsSaved } from "@/components/settings-signal";
 
@@ -270,9 +271,6 @@ export function timeAgo(iso: string, now = new Date()): string {
 function sessionMeta(chat: ChatListItem): string {
 	if (chat.compacting) return `Compacting context · ${timeAgo(chat.updatedAt)}`;
 	if (chat.pendingQuestion) return `Waiting for input · ${timeAgo(chat.updatedAt)}`;
-	if ((chat.kind ?? "teach") === "practice" && chat.pendingProblem) {
-		return `Problem waiting · ${timeAgo(chat.updatedAt)}`;
-	}
 	if (chat.busy) return "Working…";
 	return timeAgo(chat.updatedAt);
 }
@@ -288,6 +286,7 @@ export function SessionRow({
 	onOpen,
 	kbdSelected = false,
 	onContextMenu,
+	meta,
 }: {
 	chat: ChatListItem;
 	active: boolean;
@@ -297,6 +296,9 @@ export function SessionRow({
 	kbdSelected?: boolean;
 	/** Right-click opens the context menu (wave 6: Rename / Delete). */
 	onContextMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+	/** Overrides the derived meta line — the search results carry the
+	    chat's scope name there. */
+	meta?: string;
 }) {
 	return (
 		<button
@@ -304,6 +306,7 @@ export function SessionRow({
 			onClick={onOpen}
 			onContextMenu={onContextMenu}
 			data-testid={kbdSelected ? "session-row-kbd" : "session-row"}
+			data-kbdrow={kbdSelected ? "" : undefined}
 			className={cn(
 				"relative mb-0.5 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent",
 				active && "bg-accent",
@@ -318,13 +321,10 @@ export function SessionRow({
 				    rule, finally applied to the picker too (owner, typography
 				    round): mono = chrome, Source Sans = human words. */}
 				<span className="block truncate font-prose text-(length:--lh-prose-size)">{chat.title}</span>
-				<span className="block text-xs text-muted-foreground">{sessionMeta(chat)}</span>
+				<span className="block text-xs text-muted-foreground">{meta ?? sessionMeta(chat)}</span>
 			</span>
-			{/* The dumbbell rides the FAR RIGHT (owner round 6, 2026-10-05) —
-			    was left of the name; right-aligned keeps the titles flush with
-			    the teaching rows and reads cleaner. */}
-			{(chat.kind ?? "teach") === "practice" && (
-				<DumbbellIcon className="size-3.5 shrink-0 text-muted-foreground/70" aria-label="Practice session" />
+			{chat.kind === "class" && (
+				<GraduationCapIcon className="size-3.5 shrink-0 text-muted-foreground/70" aria-label="Class session" />
 			)}
 		</button>
 	);
@@ -380,25 +380,107 @@ export function RenameRow({ chat, onCommit, onCancel }: { chat: ChatListItem; on
 	);
 }
 
-/** The three-way kind filter (practice sessions, owner 2026-10-04):
- *  Teaching / All / Practice — a client-side filter over the same
- *  snapshot, persisted in localStorage, defaulting to All. */
-export type SessionKindFilter = "teach" | "all" | "practice";
-const KIND_FILTER_KEY = "lh:session-kind-filter";
+/** One walkable row of the flattened search results: a chat or a scope. */
+type WalkRow =
+	| { type: "scope"; scope: ScopeSummary }
+	| { type: "chat"; chat: ChatListItem; scopeName: string };
+
+/** The sidebar's shape (fork 2026-02, owner): one row per Scope, its chats
+ *  nested under it — the interview sessions (kind "scope") first, Classes
+ *  below, newest first within each kind. Chats without a known scope stay
+ *  hidden (the retired teach/practice history has no home here; data/chats
+ *  holds none). Pure — exported for tests. */
+export function scopeGroups(scopes: ScopeSummary[], chats: ChatListItem[]): Array<{ scope: ScopeSummary; chats: ChatListItem[] }> {
+	const byScope = new Map<string, ChatListItem[]>();
+	for (const c of chats) {
+		if (!c.scopeId) continue;
+		const list = byScope.get(c.scopeId);
+		if (list) list.push(c);
+		else byScope.set(c.scopeId, [c]);
+	}
+	const rank = (k: ChatListItem["kind"]) => (k === "scope" ? 0 : k === "class" ? 1 : 2);
+	return scopes.map((scope) => ({
+		scope,
+		chats: (byScope.get(scope.id) ?? []).sort(
+			(a, b) => rank(a.kind) - rank(b.kind) || b.updatedAt.localeCompare(a.updatedAt),
+		),
+	}));
+}
+
+/** One scope row — the group header. The row toggles the chat dropdown;
+ *  the tree icon at the right opens the Scopes view on this scope. A scope
+ *  with no chats (its interview deleted) is a leaf — the whole row opens
+ *  the view. */
+export function ScopeRow({
+	scope,
+	expanded,
+	hasChats,
+	busy,
+	kbdSelected = false,
+	onToggle,
+	onOpenView,
+	onContextMenu,
+}: {
+	scope: ScopeSummary;
+	expanded: boolean;
+	hasChats: boolean;
+	busy: boolean;
+	kbdSelected?: boolean;
+	onToggle: () => void;
+	onOpenView: () => void;
+	/** Right-click opens the scope's context menu (Delete). */
+	onContextMenu?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+}) {
+	return (
+		<div
+			data-kbdrow={kbdSelected ? "" : undefined}
+			className={cn("group mb-0.5 flex items-center rounded-lg", kbdSelected && "bg-accent/60 ring-1 ring-border")}
+		>
+			<button
+				type="button"
+				onClick={hasChats ? onToggle : onOpenView}
+				onContextMenu={onContextMenu}
+				aria-expanded={hasChats ? expanded : undefined}
+				className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-accent"
+			>
+				{hasChats ? (
+					expanded ? (
+						<ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
+					) : (
+						<ChevronRightIcon className="size-3 shrink-0 text-muted-foreground" />
+					)
+				) : (
+					<ListTreeIcon className="size-3 shrink-0 text-muted-foreground" />
+				)}
+				<span className="min-w-0 flex-1">
+					<span className="block truncate font-prose text-(length:--lh-prose-size)">{scope.name}</span>
+					<span className="block text-xs text-muted-foreground">
+						{scope.leafCount} {scope.leafCount === 1 ? "leaf" : "leaves"}
+					</span>
+				</span>
+				<SessionStatus busy={busy} />
+			</button>
+			<button
+				type="button"
+				onClick={onOpenView}
+				aria-label={`open ${scope.name} in the Scopes view`}
+				title="Open in the Scopes view"
+				className="mr-2 shrink-0 rounded-sm p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+			>
+				<ListTreeIcon className="size-3.5" />
+			</button>
+		</div>
+	);
+}
 
 function SessionsSidebar() {
 	const { open, toggle } = useSidebar();
 	const [chats, setChats] = useState<ChatListItem[] | null>(null);
+	const [scopes, setScopes] = useState<ScopeSummary[] | null>(null);
 	const [query, setQuery] = useState("");
-	const [kindFilter, setKindFilter] = useState<SessionKindFilter>("all");
-	useEffect(() => {
-		const stored = window.localStorage.getItem(KIND_FILTER_KEY);
-		if (stored === "teach" || stored === "all" || stored === "practice") setKindFilter(stored);
-	}, []);
-	const setFilter = useCallback((f: SessionKindFilter) => {
-		setKindFilter(f);
-		window.localStorage.setItem(KIND_FILTER_KEY, f);
-	}, []);
+	/* Expansion is navigation state (owner, 2026-02): never persisted —
+	   the active chat's group auto-expands, everything else starts folded. */
+	const [expanded, setExpanded] = useState<Set<string>>(new Set());
 	const pathname = usePathname();
 	const router = useRouter();
 	const { open: openSettings } = useSettingsDialog();
@@ -411,23 +493,46 @@ function SessionsSidebar() {
 		router.push("/chat/new");
 	}, [router]);
 
-	/* FUZZY (owner round 8, 2026-10-05): subsequence match ranked by
-	 * fuzzyScore — prefix beats word-boundary beats scattered. Empty query
-	 * keeps the natural list order (scores are all 0, sort is stable). */
-	const shown = useMemo(() => {
+	/* FUZZY + GROUPING (scope-grouped sidebar, 2026-02): without a query
+	 * the list renders the scope groups (scopeGroups below); with one it
+	 * FLATTENS — chats whose title matches (meta prefixed with the
+	 * scope's name) and scopes whose name matches, ranked by the same
+	 * fuzzyScore. THE SEARCH OWNS THE WALK: ↑/↓/Enter cycle this flat
+	 * list only — the grouped list has no walk. */
+	const groups = useMemo(() => (chats && scopes ? scopeGroups(scopes, chats) : null), [chats, scopes]);
+	/* The active chat's group auto-expands (owner, 2026-02): navigating
+	   into a session reveals its siblings; nothing else is expanded by
+	   default. */
+	const activeScopeId = useMemo(
+		() => chats?.find((c) => pathname === `/chat/${c.id}`)?.scopeId,
+		[chats, pathname],
+	);
+	useEffect(() => {
+		if (!activeScopeId) return;
+		setExpanded((prev) => (prev.has(activeScopeId) ? prev : new Set(prev).add(activeScopeId)));
+	}, [activeScopeId]);
+	const toggleGroup = useCallback((id: string) => {
+		setExpanded((prev) => {
+			const next = new Set(prev);
+			if (next.has(id)) next.delete(id);
+			else next.add(id);
+			return next;
+		});
+	}, []);
+	const results = useMemo(() => {
 		const q = query.trim();
-		let list = chats;
-		if (list && kindFilter !== "all") {
-			list = list.filter((c) => (c.kind ?? "teach") === kindFilter);
+		if (!q || !groups) return null;
+		const scored: Array<{ row: WalkRow; score: number }> = [];
+		for (const g of groups) {
+			const s = fuzzyScore(q, g.scope.name);
+			if (s !== null) scored.push({ row: { type: "scope", scope: g.scope }, score: s });
+			for (const c of g.chats) {
+				const cs = fuzzyScore(q, c.title);
+				if (cs !== null) scored.push({ row: { type: "chat", chat: c, scopeName: g.scope.name }, score: cs });
+			}
 		}
-		if (!list) return list;
-		if (!q) return list;
-		return list
-			.map((c) => ({ c, score: fuzzyScore(q, c.title) }))
-			.filter((r): r is { c: (typeof list)[number]; score: number } => r.score !== null)
-			.sort((a, b) => b.score - a.score)
-			.map((r) => r.c);
-	}, [chats, query, kindFilter]);
+		return scored.sort((a, b) => b.score - a.score).map((r) => r.row);
+	}, [query, groups]);
 
 	const refreshInFlightRef = useRef(false);
 	const refresh = useCallback(async () => {
@@ -437,12 +542,18 @@ function SessionsSidebar() {
 		if (refreshInFlightRef.current) return;
 		refreshInFlightRef.current = true;
 		try {
-			const res = await fetch("/api/chats", { cache: "no-store" });
-			const d = (await res.json()) as { chats: ChatListItem[] };
+			const [chatsRes, scopesRes] = await Promise.all([
+				fetch("/api/chats", { cache: "no-store" }),
+				fetch("/api/scopes", { cache: "no-store" }),
+			]);
+			const d = (await chatsRes.json()) as { chats: ChatListItem[] };
 			setChats(d.chats);
+			const s = (await scopesRes.json()) as { scopes: ScopeSummary[] };
+			setScopes(s.scopes);
 		} catch {
 			// a transient failure keeps the last snapshot
 			setChats((prev) => prev ?? []);
+			setScopes((prev) => prev ?? []);
 		} finally {
 			refreshInFlightRef.current = false;
 		}
@@ -493,8 +604,9 @@ function SessionsSidebar() {
 	/* PUSH (architecture S6, 2026-10-02): the 2.5s poll is RETIRED — the
 	   last standing network poll in the app. List truth arrives as
 	   events: chats-changed (create/rename/delete — the list-SHAPE
-	   writes), and turn-started/turn-settled for EVERY chat (unfiltered:
-	   any chat's turn flips busy/order/phase in this list). Announced
+	   writes) and scopes-changed (the scope store's write seam), and
+	   turn-started/turn-settled for EVERY chat (unfiltered: any chat's
+	   turn flips busy/order in this list). Announced
 	   fetches ride the 250ms trailing debounce (the S4/S5 law); resync
 	   (reconnect / dev-restart) is immediate. lh:turn-state +
 	   lh:chat-renamed stay for same-tab INSTANTS — local beats any
@@ -510,6 +622,7 @@ function SessionsSidebar() {
 		}, 250);
 	};
 	useServerEvent("chats-changed", scheduleEventRefresh);
+	useServerEvent("scopes-changed", scheduleEventRefresh);
 	useServerEvent("turn-started", scheduleEventRefresh);
 	useServerEvent("turn-settled", scheduleEventRefresh);
 	useServerEvent("compaction-changed", scheduleEventRefresh);
@@ -527,10 +640,10 @@ function SessionsSidebar() {
 	   walked row, or the FIRST match when nothing is walked (owner,
 	   2026-10-10 — the quick-open pattern: ⌘⇧F, type, Enter, done). The
 	   Alt+↑/↓/↵ global cycle was RETIRED the same round: barely used,
-	   felt laggy. The selection is a row index into `shown`, so the walk
-	   follows whatever the query + kind filter leave. Mouse and keyboard
-	   coexist: hovering doesn't claim, a click or an open clears the
-	   selection. */
+	   felt laggy. The selection is a row index into `results` (the flat
+	   search list), so the walk follows whatever the query leaves. Mouse
+	   and keyboard coexist: hovering doesn't claim, a click or an open
+	   clears the selection. */
 	const [kbdIndex, setKbdIndex] = useState<number | null>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
@@ -547,6 +660,12 @@ function SessionsSidebar() {
 	const ctxAnchorRef = useRef<HTMLElement | null>(null);
 	const [renamingId, setRenamingId] = useState<string | null>(null);
 	const [deleting, setDeleting] = useState<ChatListItem | null>(null);
+	/* The scope rows' menu (scope delete): same anchor ref + dismissal
+	   contract, one target — mutually exclusive with the chat menu by
+	   the pointerdown rule (a right-click closes whichever menu is open
+	   before its contextmenu opens the next). */
+	const [ctxScopeId, setCtxScopeId] = useState<string | null>(null);
+	const [deletingScope, setDeletingScope] = useState<ScopeSummary | null>(null);
 
 	const openContext = (e: React.MouseEvent<HTMLButtonElement>, chat: ChatListItem) => {
 		e.preventDefault(); // suppress the native menu
@@ -554,22 +673,30 @@ function SessionsSidebar() {
 		setCtxChatId(chat.id);
 	};
 
+	const openScopeContext = (e: React.MouseEvent<HTMLButtonElement>, scope: ScopeSummary) => {
+		e.preventDefault(); // suppress the native menu
+		ctxAnchorRef.current = e.currentTarget;
+		setCtxScopeId(scope.id);
+	};
+
 	// The menu contract (agent-section's): any pointerdown outside the menu
 	// or its row closes it; Esc is CLAIMED so it never also aborts a turn
 	// or folds the sidebar. Right-clicking another row re-anchors: its
 	// pointerdown closes this menu, its contextmenu opens the next.
 	useEffect(() => {
-		if (ctxChatId === null) return;
+		if (ctxChatId === null && ctxScopeId === null) return;
 		const onPointerDown = (e: PointerEvent) => {
 			const target = e.target as Node;
 			if (target instanceof Element && target.closest("[data-lh-menu]")) return;
 			if (ctxAnchorRef.current?.contains(target)) return;
 			setCtxChatId(null);
+			setCtxScopeId(null);
 		};
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === "Escape") {
 				e.stopPropagation();
 				setCtxChatId(null);
+				setCtxScopeId(null);
 			}
 		};
 		document.addEventListener("pointerdown", onPointerDown);
@@ -578,7 +705,7 @@ function SessionsSidebar() {
 			document.removeEventListener("pointerdown", onPointerDown);
 			document.removeEventListener("keydown", onKeyDown);
 		};
-	}, [ctxChatId]);
+	}, [ctxChatId, ctxScopeId]);
 
 	// Inline rename (owner ruling, wave 6): the row swaps to a text input;
 	// commit rides the SAME plumbing as the header rename — PUT the title,
@@ -617,6 +744,21 @@ function SessionsSidebar() {
 		[pathname, router],
 	);
 
+	// Scope delete success: patch the list instantly (the scopes-changed
+	// event is the backstop) and leave the Scopes view only when it was
+	// showing the deleted one — the param read at delete time, no extra
+	// state for a rare path. Its chats stay on disk (orphan doctrine) but
+	// vanish from the groups by scopeGroups' known-scope rule — instant,
+	// no chats patch needed.
+	const onScopeDeleted = useCallback(
+		(id: string) => {
+			setDeletingScope(null);
+			setScopes((prev) => (prev ? prev.filter((s) => s.id !== id) : prev));
+			if (pathname === "/scope" && new URLSearchParams(window.location.search).get("scope") === id) router.push("/");
+		},
+		[pathname, router],
+	);
+
 	useEffect(() => {
 		const onFocusSearch = () => {
 			if (!open) toggle();
@@ -632,7 +774,7 @@ function SessionsSidebar() {
 	// buttons, so the index matches).
 	useEffect(() => {
 		if (kbdIndex === null) return;
-		listRef.current?.querySelectorAll("button")[kbdIndex]?.scrollIntoView({ block: "nearest" });
+		listRef.current?.querySelectorAll("[data-kbdrow]")[kbdIndex]?.scrollIntoView({ block: "nearest" });
 	}, [kbdIndex]);
 
 	useEffect(() => {
@@ -689,10 +831,9 @@ function SessionsSidebar() {
 					</Hint>
 				</div>
 
-				{/* Two doors, STACKED (owner round 8, 2026-10-05 — was a
-				    half/half row): full-width rows read cleaner and give the
-				    labels room; teaching keeps the original draft route,
-				    practice carries its mode. */}
+				{/* The scope-only law: one create button — the scope interview.
+				    The list below IS the scopes door — every scope row opens the
+				    view (the tree icon), so no separate button. */}
 				<div className="mx-3 mb-2 flex flex-col gap-1.5">
 					<button
 						type="button"
@@ -701,23 +842,13 @@ function SessionsSidebar() {
 						className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 					>
 						<PlusIcon className="size-3" />
-						Teaching
-						<span className="sr-only">create a new teaching session</span>
-					</button>
-					<button
-						type="button"
-						data-testid="new-session-practice"
-						onClick={() => router.push("/chat/new?mode=practice")}
-						className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs uppercase tracking-wider text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-					>
-						<DumbbellIcon className="size-3" />
-						Practice
-						<span className="sr-only">create a new practice session</span>
+						New scope session
+						<span className="sr-only">create a new scope session</span>
 					</button>
 				</div>
 
 				<div className="mx-3 mb-2 flex items-center gap-2">
-					<span className="text-xs uppercase tracking-widest text-muted-foreground/70">Sessions</span>
+					<span className="text-xs uppercase tracking-widest text-muted-foreground/70">Scopes</span>
 					<Hint label="Search sessions" action="sessions-search" side="bottom">
 					<span className="relative flex-1">
 						<Input
@@ -748,7 +879,7 @@ function SessionsSidebar() {
 								}
 								// Modified keys belong to the surface (⇧↵ etc.).
 								if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-								const n = shown?.length ?? 0;
+								const n = results?.length ?? 0;
 								if (n === 0) return;
 								if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 									// The rows move, not the caret.
@@ -760,10 +891,10 @@ function SessionsSidebar() {
 									return;
 								}
 								if (e.key === "Enter") {
-									const target = shown![kbdIndex !== null && kbdIndex < n ? kbdIndex : 0];
+									const target = results![kbdIndex !== null && kbdIndex < n ? kbdIndex : 0];
 									if (!target) return;
 									e.preventDefault();
-									router.push(`/chat/${target.id}`);
+									router.push(target.type === "chat" ? `/chat/${target.chat.id}` : `/scope?scope=${target.scope.id}`);
 									setKbdIndex(null);
 									e.currentTarget.blur();
 								}
@@ -777,64 +908,88 @@ function SessionsSidebar() {
 					</Hint>
 				</div>
 
-				{/* The three-way filter, HEADING THE LIST (owner round 8b,
-				    2026-10-05 — moved below the search): it scopes what the
-				    list shows, so it sits directly above it as a caption row;
-				    search stays the top muscle-memory target. Order: Teaching /
-				    Practice / All — the real modes first, "All" as the escape
-				    hatch on the right, mirroring the create-buttons above.
-				    Persisted client-side. */}
-				<div className="mx-3 flex items-center gap-0.5 rounded-md border border-border/60 bg-background p-0.5" data-testid="session-kind-filter">
-					{(["teach", "practice", "all"] as const).map((f) => (
-						<button
-							key={f}
-							type="button"
-							data-testid={`kind-filter-${f}`}
-							onClick={() => setFilter(f)}
-							className={cn(
-								"flex-1 rounded-sm px-2 py-1 text-[11px] uppercase tracking-wider transition-colors",
-								kindFilter === f
-									? "bg-accent text-foreground"
-									: "text-muted-foreground hover:text-foreground",
-							)}
-						>
-							{f === "teach" ? "Teaching" : f === "all" ? "All" : "Practice"}
-						</button>
-					))}
-				</div>
-
-				<div ref={listRef} className="flex-1 overflow-y-auto p-2">
-					{shown === null ? (
-						<div className="px-2 py-4 text-xs text-muted-foreground">Loading…</div>
-					) : shown.length === 0 ? (
-						<div className="px-2 py-4 text-xs text-muted-foreground">
-							{query.trim() ? "No sessions match." : "No sessions yet."}
-						</div>
+			{/* The grouped list (scope-grouped sidebar, 2026-02): the section
+			    IS the scopes — one row per scope, its chats in the dropdown
+			    under it. A query flattens (results, above). */}
+			<div ref={listRef} className="flex-1 overflow-y-auto p-2">
+				{results ? (
+					results.length === 0 ? (
+						<div className="px-2 py-4 text-xs text-muted-foreground">No matches.</div>
 					) : (
-						shown.map((c, i) =>
-							renamingId === c.id ? (
+						results.map((r, i) =>
+							r.type === "chat" && renamingId === r.chat.id ? (
 								<RenameRow
-									key={c.id}
-									chat={c}
-									onCommit={(next) => void commitRename(c.id, next)}
+									key={r.chat.id}
+									chat={r.chat}
+									onCommit={(next) => void commitRename(r.chat.id, next)}
 									onCancel={() => setRenamingId(null)}
 								/>
-							) : (
+							) : r.type === "chat" ? (
 								<SessionRow
-									key={c.id}
-									chat={c}
-									active={pathname === `/chat/${c.id}`}
+									key={r.chat.id}
+									chat={r.chat}
+									active={pathname === `/chat/${r.chat.id}`}
 									kbdSelected={i === kbdIndex}
+									meta={`${r.scopeName} · ${sessionMeta(r.chat)}`}
 									onOpen={() => {
 										setKbdIndex(null);
-										router.push(`/chat/${c.id}`);
+										router.push(`/chat/${r.chat.id}`);
 									}}
-									onContextMenu={(e) => openContext(e, c)}
+									onContextMenu={(e) => openContext(e, r.chat)}
+								/>
+							) : (
+								<ScopeRow
+									key={r.scope.id}
+									scope={r.scope}
+									expanded={false}
+									hasChats={false}
+									busy={false}
+									kbdSelected={i === kbdIndex}
+									onToggle={() => {}}
+									onContextMenu={(e) => openScopeContext(e, r.scope)}
+									onOpenView={() => {
+										setKbdIndex(null);
+										router.push(`/scope?scope=${r.scope.id}`);
+									}}
 								/>
 							),
 						)
-					)}
-				</div>
+					)
+				) : groups === null ? (
+					<div className="px-2 py-4 text-xs text-muted-foreground">Loading…</div>
+				) : groups.length === 0 ? (
+					<div className="px-2 py-4 text-xs text-muted-foreground">No scopes yet — start a scope session above.</div>
+				) : (
+					groups.map(({ scope, chats: groupChats }) => (
+						<div key={scope.id}>
+							<ScopeRow
+								scope={scope}
+								expanded={expanded.has(scope.id)}
+								hasChats={groupChats.length > 0}
+								busy={groupChats.some((c) => c.busy || c.compacting)}
+								onToggle={() => toggleGroup(scope.id)}
+								onContextMenu={(e) => openScopeContext(e, scope)}
+								onOpenView={() => router.push(`/scope?scope=${scope.id}`)}
+							/>
+							{expanded.has(scope.id) &&
+								groupChats.map((c) =>
+									renamingId === c.id ? (
+										<RenameRow key={c.id} chat={c} onCommit={(next) => void commitRename(c.id, next)} onCancel={() => setRenamingId(null)} />
+									) : (
+										<div key={c.id} className="ml-3">
+											<SessionRow
+												chat={c}
+												active={pathname === `/chat/${c.id}`}
+												onOpen={() => router.push(`/chat/${c.id}`)}
+												onContextMenu={(e) => openContext(e, c)}
+											/>
+											</div>
+										),
+								)}
+						</div>
+					))
+				)}
+			</div>
 
 					{/* Background agents (owner, sidebar round): the section is
 					    ALWAYS here — empty means empty (the header sits alone); it
@@ -924,16 +1079,51 @@ function SessionsSidebar() {
 							Delete…
 						</button>
 						<div className="my-0.5 border-t border-border/60" aria-hidden="true" />
-						<CoverageMenuBlock chatId={ctxChatId} />
+						{/* Extraction never runs for Classes (chat-handler skips
+						    kind "class") — coverage is meaningless there. */}
+						{chats?.find((c) => c.id === ctxChatId)?.kind !== "class" && (
+							<CoverageMenuBlock chatId={ctxChatId} />
+						)}
+					</MenuShell>
+				)}
+
+				{/* The scope menu: Delete only — the one management action a
+			    scope has, alone per the danger-fence law (destructive last). */}
+				{ctxScopeId !== null && (
+					<MenuShell
+						anchorRef={ctxAnchorRef}
+						testid="scope-context-menu"
+						preferredSide="down"
+						menuClass="flex w-52 flex-col gap-0.5 rounded-xl border bg-card p-2 text-xs shadow-xl"
+					>
+						<button
+							type="button"
+							data-testid="ctx-scope-delete"
+							onClick={() => {
+								const target = scopes?.find((s) => s.id === ctxScopeId);
+								if (target) setDeletingScope(target);
+								setCtxScopeId(null);
+							}}
+							className="flex items-center rounded-lg px-2.5 py-1.5 text-left text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground"
+						>
+							Delete…
+						</button>
 					</MenuShell>
 				)}
 
 				{/* The two-option delete dialog (wave 6) — portaled to body
-				    by the component itself, lives here for state locality. */}
+			    by the component itself, lives here for state locality. */}
 				<DeleteSessionDialog
 					chat={deleting}
 					onClose={() => setDeleting(null)}
 					onDeleted={onDeleted}
+				/>
+				{/* The scope delete dialog — same shape, state-local like the
+			    session one. */}
+				<DeleteScopeDialog
+					scope={deletingScope}
+					onClose={() => setDeletingScope(null)}
+					onDeleted={onScopeDeleted}
 				/>
 			</aside>
 	);

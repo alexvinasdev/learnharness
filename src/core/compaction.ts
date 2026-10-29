@@ -26,15 +26,11 @@
  * Summary content (owner's three requirements + continuity): the
  * learner's understanding and its EVOLUTION (quiz outcomes, confidence,
  * misconceptions — a detailed picture of what the user knows), the
- * teaching arc / session progression, and the plan dependency tree
- * VERBATIM (from record.tree — the plan_init tool result may fall before
- * the cut, so the marker re-injects it). Plus the current moment (any
+ * teaching arc / session progression, and the current moment (any
  * pending question/problem and the immediate next step) so the post-cut
  * model can continue mid-thought.
  */
 
-import type { PlanTree } from "./contracts/plan.ts";
-import { derivePlanStatusesLh, derivedNodeStatus } from "./contracts/plan.ts";
 import { COMPACTED_HISTORY_HEADER } from "./contracts/chat.ts";
 import type { LhMessage, LhMarkerMessage } from "./native-messages.ts";
 import { newMessageId } from "./native-messages.ts";
@@ -194,7 +190,7 @@ export function estimateTokens(messages: readonly (LhMessage | AgentMessage)[]):
  * markers have no context, just like native metadata entries. */
 function cutMessage(message: LhMessage): LhMessage | null {
 	if (message.role !== "custom") return message;
-	if (["compaction", "plan-block", "problem-dismissed"].includes(message.customType)) return null;
+	if (["compaction", "problem-dismissed"].includes(message.customType)) return null;
 	return message;
 }
 
@@ -334,34 +330,12 @@ export function serializeForSummary(messages: readonly LhMessage[]): string {
 			);
 		} else if (role === "custom") {
 			const marker = m as LhMarkerMessage;
-			if (marker.customType === "plan-block") continue; // UI-only
 			lines.push(`[SYSTEM NOTE] ${marker.content}`);
 		}
 	}
 	return lines.join("\n\n");
 }
 
-/** Render the plan dependency tree verbatim (owner requirement: the tree
- * persists through compaction). Structure from record.tree, statuses
- * derived from the transcript (the record's own law: the tree carries
- * structure only). Empty tree → absent section (nothing persisted). */
-export function planTreeToText(tree: PlanTree | undefined, messages: readonly LhMessage[]): string | null {
-	if (!tree || tree.nodes.length === 0) return null;
-	const statuses = derivePlanStatusesLh(tree, messages);
-	const byId = new Map(tree.nodes.map((n) => [n.id, n]));
-	const lines: string[] = [];
-	for (const node of tree.nodes) {
-		const status = derivedNodeStatus(statuses, node.id);
-		const summary = node.summary ? ` — ${node.summary}` : "";
-		lines.push(`- [${status}] ${node.title} (${node.id})${summary}`);
-	}
-	for (const edge of tree.edges) {
-		const from = byId.get(edge.from);
-		const to = byId.get(edge.to);
-		if (from && to) lines.push(`- ${from.title} → ${to.title} (${from.id} → ${to.id})`);
-	}
-	return lines.join("\n");
-}
 
 /**
  * The summarizer prompt. The summary's REQUIRED SHAPE (owner rulings):
@@ -373,13 +347,9 @@ export function planTreeToText(tree: PlanTree | undefined, messages: readonly Lh
 export function buildCompactionPrompt(input: {
 	/** The span to summarize, pre-serialized (serializeForSummary). */
 	spanText: string;
-	/** The plan tree rendered (planTreeToText) or null. */
-	planTreeText: string | null;
 	/** The session kind (wording: tutor vs practice agent). */
 	kind: "teach" | "practice" | "probe";
 }): string {
-	const planSection =
-		input.planTreeText ?? "No plan tree exists in this session (nothing was persisted).";
 	return `You are compacting the earlier part of a tutoring session — writing the summary your future self will read INSTEAD of that transcript. Everything before the cut is replaced by what you write; everything after stays verbatim. The learner's transcript below labels the learner as [LEARNER], the tutoring agent as [TUTOR], tool traffic as [RESULT …]/[SYSTEM NOTE].
 
 Write the summary with EXACTLY these sections, in this order:
@@ -389,11 +359,6 @@ The most detailed picture you can give of what this learner knows and how that E
 
 ## The teaching arc
 How the session progressed: what was covered and in what order, which explanations landed and which didn't, how the learner responded, where the momentum went. Include probe-phase findings if present.
-
-## The plan dependency tree
-Reproduce the session's current plan tree verbatim from the structure below — do not drop nodes, edges, or statuses.
-
-${planSection}
 
 ## The current moment
 What is happening RIGHT NOW at the cut: any question or problem awaiting the learner's answer, any commitment the agent has made that a later turn must honor, and the immediate next step.

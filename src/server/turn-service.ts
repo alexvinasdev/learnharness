@@ -5,7 +5,7 @@
  * job runner) — no module here imports an adapter.
  *
  *   persistTurn        — the canonical state write (Wave B: native history;
- *                        id stamping, placeholder filtering, plan-block
+ *                        id stamping, placeholder filtering
  *                        emission, abort-partial persistence)
  *   triggerExtraction  — the graph write channel: fires the extraction
  *                        pipeline (the sole graph writer) once a chat
@@ -20,7 +20,6 @@ import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import type { LhMessage } from "../core/native-messages.ts";
 import { newMessageId } from "../core/native-messages.ts";
 import { QUESTION_TOOLS } from "../core/pending.ts";
-import { planBlocksFor } from "../core/plan-blocks.ts";
 import { coverageOf } from "../core/coverage.ts";
 import type { ChatStore, GraphStore } from "../core/ports.ts";
 import type { ExtractionPipeline } from "../agent/subagents/extraction.ts";
@@ -50,8 +49,8 @@ export class TurnPersistenceError extends Error {
  *   unanswered call; the learner's answer arrives as the real tool
  *   result). Errored question calls DO persist — the model's retry
  *   context.
- * - Plan blocks: one frozen snapshot per successful plan_init call,
- *   idempotent (persist replays are safe).
+ *   The whole write is idempotent (persist replays are safe). The fork
+ *   2026-01-26 removed the plan-block stamping with the plan tree.
  *
  * Returns the stamped new messages (usage provenance reads them). Throws
  * TurnPersistenceError on failure so the runner can report it before DONE.
@@ -79,12 +78,7 @@ export function persistTurn(
 			}
 			stamped.push(message.id ? message : ({ ...message, id: newMessageId() } as LhMessage));
 		}
-		const tree = record.tree;
-		const blocks = planBlocksFor(record.messages, stamped, tree, [
-			...record.messages,
-			...stamped,
-		]);
-		chatStore.saveMessages(chatId, [...record.messages, ...stamped, ...blocks]);
+		chatStore.saveMessages(chatId, [...record.messages, ...stamped]);
 		return stamped;
 	} catch (err) {
 		console.error(`[chat ${chatId}] persist failed:`, err, { isAborted });

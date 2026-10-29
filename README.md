@@ -15,7 +15,7 @@
   <a href="https://github.com/amosblomqvist/learnharness/issues">Issues</a>
 </p>
 
-LearnHarness uses AI agents to plan and teach lessons from your current understanding to your goal. It builds a detailed picture of what you understand and how you reason. That picture is updated as you learn.
+LearnHarness uses AI to interview you into a persistent **scope** — the weighted topic tree of what you want to learn — then turns each leaf into a cheatsheet (the lesson) and a batch of exercises. A **class** walks the tree with you; the grind loop measures what you actually retain, deterministically, without a model in the loop.
 
 Instead of just giving you an explanation, it uses your answers and thinking to decide what you need next. Teaching builds understanding one reasoning step at a time. Practice makes it usable. A persistent knowledge graph carries it across sessions.
 
@@ -23,12 +23,17 @@ Instead of just giving you an explanation, it uses your answers and thinking to 
 
 ## How it works
 
-1. **Measure.** Before teaching, the agent finds where your understanding ends on each part the lesson depends on. Your answers, confidence, and thinking show it where to start.
-2. **Plan.** It works out a dependency map from that starting point to your goal. You can see the plan, and the lesson adapts when your understanding turns out different.
-3. **Teach.** Each step builds on something you already understand. You predict, get an explanation, and check your understanding. Confusions are repaired before anything is built on them. The aim is for the goal to feel obviously true, not merely familiar.
-4. **Practice.** Separate sessions pose varied problems that require the right knowledge to come to mind without being named first. Problems and hints adapt to your reasoning.
+1. **Map the scope.** A scope session interviews you about what you want to learn and what it's for — even if you don't know yet. The result is a topic tree with per-objective importance: what matters for *your* goal, what's optional, what's excluded.
+2. **Cheatsheets.** Each leaf of the tree earns a schematized one-page theory reference, generated on demand or in bulk — the lesson itself, kept as plain markdown you can reread anytime.
+3. **Exercises.** Each leaf can generate a batch of six universal types — flashcards, cloze, ordering, matching, spot-the-error, numeric. Batches land straight in the pool; bury is the only curation.
+4. **Class.** A chat session walks the scope's leaves with you — teaching from each leaf's cheatsheet, probing first with 1-2 pool exercises to find where explanation should begin, posing more as it goes (it can also spawn a targeted exercise on the spot, which joins the pool). Attempts land in the same grind log; grading is always deterministic. Take one from the scope page — on the whole scope or any subtree.
+5. **Grind.** The deterministic practice loop serves exercises one at a time with instant binary feedback — no model in the loop, zero tokens per answer. What you struggle with returns first; what's solid fades to maintenance; what's been idle too long gets flagged **rusty**.
 
-**Think out loud.** The thinking fields let you explain your reasoning, uncertainties, and reactions in your own words. This is how the agent gets a detailed picture rather than just a record of right and wrong answers. You can type or use dictation.
+## The knowledge graph
+
+What you are taught still accumulates as propositions and reasoning chains — individual claims and the premises that lead to them — with links back to the sessions and topics that produced them. You can also import notes. The graph remains inspectable; with teaching sessions retired (2026-02), it grows through imports and earlier sessions.
+
+**Think out loud.** The thinking fields let you explain your reasoning, uncertainties, and reactions in your own words. You can type or use dictation.
 
 The agent can also research questions in the background, create visual explanations, and build interactive demonstrations.
 

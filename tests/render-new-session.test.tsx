@@ -32,7 +32,7 @@ describe("startDraftSession — the create-on-send contract", () => {
 		assert.equal(calls.length, 1);
 		assert.equal(calls[0]!.url, "/api/chats");
 		assert.equal(calls[0]!.method, "POST");
-		assert.deepEqual(calls[0]!.body, { title: "teach me orbital mechanics" });
+		assert.deepEqual(calls[0]!.body, { title: "teach me orbital mechanics", kind: "scope" });
 	});
 
 	it("no settings PUT on create — the server stamps the newborn (per-session models, owner 2026-09-28)", async () => {
@@ -66,8 +66,8 @@ describe("DraftShell — the sessionless surface", () => {
 		assert.ok(html.includes('data-testid="stats-model"'));
 		// No CTA by default: a configured surface stays quiet.
 		assert.ok(!html.includes('data-testid="setup-cta"'));
-		// The same empty state a fresh chat shows.
-		assert.ok(html.includes("The teacher will open by probing what you already know."));
+		// The same empty state a fresh scope session shows.
+		assert.ok(html.includes("Say what the domain is for — the interviewer helps you map what to learn into a topic tree."));
 		// The pointer-events pattern (953b22b): the wrapper stays inert…
 		assert.ok(html.includes("pointer-events-none"));
 		// …and the blob re-enables it.
@@ -110,95 +110,53 @@ describe("DraftShell — the sessionless surface", () => {
 		assert.ok(!/\/chat\/c[a-z0-9_]+/.test(html));
 	});
 });
-describe("the practice draft (?mode=practice, 2026-10-04)", () => {
-	it("the shell swaps copy: practice title, empty state, placeholder", () => {
+describe("the scope draft (scope-only law, 2026-02)", () => {
+	it("the shell carries the interview copy: title, empty state, placeholder", () => {
 		const html = renderToStaticMarkup(
 			<DraftShell
 				busy={false}
 				text=""
 				onChange={() => {}}
 				onSend={() => {}}
-				mode="practice"
 			/>,
 		);
-		assert.match(html, /New practice session/);
-		assert.ok(html.includes("Pick nodes from your knowledge graph, describe what you want to practice, or bring your own problem."));
-		assert.match(html, /What do you want to practice\?/);
+		assert.match(html, /New scope session/);
+		assert.ok(html.includes("Say what the domain is for — the interviewer helps you map what to learn into a topic tree."));
+		assert.match(html, /What domain, and what for\?/);
 	});
 
-	it("THE PICK BAR (owner round 10): the practice draft carries the same pill above its composer", () => {
+	it("a refinement draft (scopeIdPresent) swaps the copy to the continue-on-the-scope variant", () => {
 		const html = renderToStaticMarkup(
 			<DraftShell
 				busy={false}
 				text=""
 				onChange={() => {}}
 				onSend={() => {}}
-				mode="practice"
+				scopeIdPresent
 			/>,
 		);
-		assert.match(html, />Pick nodes<\/button>/);
-		// picked: count + Clear, the home register verbatim
-		const picked = renderToStaticMarkup(
-			<DraftShell
-				busy={false}
-				text=""
-				onChange={() => {}}
-				onSend={() => {}}
-				mode="practice"
-				picks={[{ id: "n_1", name: "Parity", statement: "Odd + odd = even." }]}
-			/>,
-		);
-		assert.match(picked, /1 node selected/);
-		assert.match(picked, /Clear/);
-		// teach mode with nothing picked renders nothing (home's law)
-		const teach = renderToStaticMarkup(
-			<DraftShell busy={false} text="" onChange={() => {}} onSend={() => {}} mode="teach" />,
-		);
-		assert.ok(!teach.includes('data-testid="practice-props-chip"'));
+		assert.ok(html.includes("The interview continues on the existing scope"));
+		assert.match(html, /What should change in the scope\?/);
 	});
 
-	it("startDraftSession carries the picks as graphContext (the home practice contract)", async () => {
-		let body: Record<string, unknown> | null = null;
-		const f = (async (_url: string, init?: RequestInit) => {
-			body = JSON.parse(String(init?.body));
-			return new Response(JSON.stringify({ id: "c10" }), { status: 201 });
-		}) as unknown as typeof fetch;
-		await startDraftSession("drill me", f, "practice", [{ id: "n_1", name: "Parity", statement: "Odd + odd = even." }]);
-		assert.deepEqual(body, {
-			title: "drill me",
-			kind: "practice",
-			graphContext: { propositions: [{ id: "n_1", name: "Parity", statement: "Odd + odd = even." }] },
-		});
-	});
-
-	it("practice with NO picks stays lean — no graphContext key on the wire", async () => {
-		let body: Record<string, unknown> | null = null;
-		const f = (async (_url: string, init?: RequestInit) => {
-			body = JSON.parse(String(init?.body));
-			return new Response(JSON.stringify({ id: "c11" }), { status: 201 });
-		}) as unknown as typeof fetch;
-		await startDraftSession("free practice", f, "practice", []);
-		assert.deepEqual(body, { title: "free practice", kind: "practice" });
-	});
-
-	it("startDraftSession carries kind:\"practice\" to the create route", async () => {
+	it("startDraftSession carries kind:\"scope\" and the scopeId (the refinement contract)", async () => {
 		let body: Record<string, unknown> | null = null;
 		const f = (async (_url: string, init?: RequestInit) => {
 			body = JSON.parse(String(init?.body));
 			return new Response(JSON.stringify({ id: "c9" }), { status: 201 });
 		}) as unknown as typeof fetch;
-		const target = await startDraftSession("the parity chain", f, "practice");
+		const target = await startDraftSession("the parity chain", f, "scope_1");
 		assert.equal(target, "/chat/c9?prompt=the%20parity%20chain");
-		assert.deepEqual(body, { title: "the parity chain", kind: "practice" });
+		assert.deepEqual(body, { title: "the parity chain", kind: "scope", scopeId: "scope_1" });
 	});
 
-	it("the teaching default is unchanged — no kind key on the wire", async () => {
+	it("a fresh draft sends no scopeId key at all", async () => {
 		let body: Record<string, unknown> | null = null;
 		const f = (async (_url: string, init?: RequestInit) => {
 			body = JSON.parse(String(init?.body));
-			return new Response(JSON.stringify({ id: "c8" }), { status: 201 });
+			return new Response(JSON.stringify({ id: "c10" }), { status: 201 });
 		}) as unknown as typeof fetch;
-		await startDraftSession("orbital mechanics", f);
-		assert.deepEqual(body, { title: "orbital mechanics" });
+		await startDraftSession("drill me", f);
+		assert.deepEqual(body, { title: "drill me", kind: "scope" });
 	});
 });

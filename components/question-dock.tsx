@@ -852,6 +852,7 @@ function QuestionDockForm({
 					</div>
 					{qd.mode === "text" ? (
 						<textarea
+					suppressHydrationWarning /* grammar-checker extensions stamp inputs pre-hydration (2026-11) */
 							value={text}
 							onChange={(e) => {
 								answerTextRef.current = e.target.value;
@@ -880,6 +881,7 @@ function QuestionDockForm({
 						/>
 					) : (
 						<textarea
+					suppressHydrationWarning
 							ref={thinkingRef}
 							value={thinking}
 							onChange={(e) => {

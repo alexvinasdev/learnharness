@@ -144,6 +144,14 @@ export interface GraphNode {
 	createdAt: string;
 	/** Every (chat, message) point where this proposition came up. */
 	provenance: ProvenancePoint[];
+	/** Scope-topic links (fork 2026-01-26, optional — absent on old records
+	 *  and on propositions no session linked): the "t_…" ids of the Scope
+	 *  leaves this proposition teaches. Purely a CROSS-ARTIFACT REFERENCE —
+	 *  it changes nothing in the graph's own doctrine (the node stays a
+	 *  true proposition; assessments never enter here); cheatsheet and
+	 *  exercise generation read it as source material, and the teach
+	 *  session's strip uses it for per-topic coverage. */
+	topicIds?: string[];
 }
 
 /** sessions.jsonl line — the emission checkpoint for one chat (which chats

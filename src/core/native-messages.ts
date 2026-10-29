@@ -13,15 +13,15 @@
  * native shape. `toLlmMessages` strips it at the wire: the provider never
  * sees it (verified single site, below).
  *
- * UI-ONLY CONTENT (owner ruling, fork 1 + the plan's custom-message
+ * UI-ONLY CONTENT (owner ruling, fork 1 + the custom-message
  * taxonomy): the probe→teach handoff, sub-agent steers,
- * and plan blocks are LhMarkerMessage — this app's declaration-merged
+ * and plan blocks were LhMarkerMessage — this app's declaration-merged
  * member of pi-agent-core's CustomAgentMessages extension point, shaped
  * exactly like pi's own CustomMessage ({role:"custom", customType,
  * content, display, details}). ONE seam — toLlmMessages, wired as the
  * agent's convertToLlm — owns every model-facing decision: markers
  * flatten to their canonical user text (single-sourced in
- * core/contracts), plan blocks are UI-only and filtered, and dangling
+ * core/contracts), dangling
  * tool calls (an aborted turn) get the interrupted-result synthesis the
  * provider protocol demands.
  *
@@ -70,7 +70,6 @@ export interface LhMarkerMessage {
 		| "probe-handoff"
 		| "subagent-steer"
 		| "subagent-abort"
-		| "plan-block"
 		| "practice-thinking"
 		| "practice-next"
 		| "problem-dismissed"
@@ -95,6 +94,8 @@ export type LhMessage = (UserMessage | AssistantMessage | ToolResultMessage | Lh
 /** A record message list is assignable to the agent's context — that IS
  *  the replay (ui-stream/chat-handler assign it to initialState.messages). */
 export function asAgentMessages(messages: readonly LhMessage[]): AgentMessage[] {
+	// SAFETY: LhMessage IS the wire shape pi consumes (the union plus the
+	// app's id); the double-cast only reconciles the declared brand types.
 	return messages as unknown as AgentMessage[];
 }
 
@@ -215,23 +216,6 @@ export function newHandoffMessage(chatId: string): LhMarkerMessage {
 	};
 }
 
-/** The plan presentation block: pure UI history (a frozen snapshot), no
- *  model face — toLlmMessages filters it. `planCallId` keys idempotent
- *  emission (one block per successful plan_init call). */
-export function newPlanBlockMessage(
-	planCallId: string,
-	block: unknown,
-): LhMarkerMessage {
-	return {
-		id: `pb_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`,
-		role: "custom",
-		customType: "plan-block",
-		content: "",
-		display: true,
-		details: { planCallId, block },
-		timestamp: Date.now(),
-	};
-}
 
 // ─── practice sessions (owner, 2026-10-04) ───────────────────────────────────
 
@@ -603,7 +587,7 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 			const marker = m as LhMarkerMessage;
 			// UI-only markers: plan blocks, and problem dismissals (the
 			// synthesized conclude pair carries the model's face).
-			if (marker.customType === "plan-block" || marker.customType === "problem-dismissed") continue;
+			if (marker.customType === "problem-dismissed") continue;
 			// The ACTIVE compaction marker already rendered as the head —
 			// never twice. (Stale markers before the cut are unreachable; a
 			// marker whose cut could not resolve has no head and renders as
@@ -733,7 +717,7 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
 		if (["practice-thinking", "practice-next"].includes(message.customType)) return "learner";
-		return ["graph-context", "plan-block", "problem-dismissed", "compaction"].includes(message.customType) ? "neutral" : "unrecognizable";
+		return ["graph-context", "problem-dismissed", "compaction"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {
 		if (!(QUESTION_TOOLS as readonly string[]).includes(message.toolName) || message.isError || message.details == null || (message.details as { dismissed?: boolean }).dismissed) return "neutral";

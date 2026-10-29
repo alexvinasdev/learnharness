@@ -7,6 +7,10 @@
 export * from "./chat-handler.ts";
 export * from "./events-stream.ts";
 export * from "./chats.ts";
+export * from "./scopes.ts";
+export * from "./cheatsheets.ts";
+export * from "./exercise-gen.ts";
+export * from "./gen-queue.ts";
 export * from "./graph.ts";
 export { NotesImportError } from "../agent/subagents/extraction.ts";
 export * from "./commit-positions.ts";

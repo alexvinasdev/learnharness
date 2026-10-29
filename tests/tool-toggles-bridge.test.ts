@@ -15,9 +15,7 @@ import { z } from "zod";
 import { describe, it } from "node:test";
 import { Type } from "typebox";
 import { questionResult } from "../src/agent/tool-execute.ts";
-import { createProberAgent, createTeacherAgent } from "../src/agent/teacher-agent.ts";
-import type { ProberToolContext } from "../src/agent/tools.ts";
-import { jobStore } from "../src/store/jobs.ts";
+import { createScoperAgent } from "../src/agent/teacher-agent.ts";
 import { parseAgentSettingsBody } from "../src/server/settings-body.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { createFauxCore } from "@earendil-works/pi-ai";
@@ -35,24 +33,32 @@ describe("AgentBuildOptions.toolToggles (the P2 bridge)", () => {
 	const toolNames = (agent: { state: { tools: Array<{ name: string }> } }) =>
 		agent.state.tools.map((t) => t.name).sort();
 
-	it("flows into the teacher's registry: a job-tool delta is a no-op on the bare set", () => {
-		// No ctx → bare agent: quiz/ask only. A job-tool delta names tools
-		// that don't exist there — the bridge must not crash on it.
-		const bare = createTeacherAgent(undefined, { engine: fauxEngine(), toolToggles: { research: false } });
-		assert.deepEqual(toolNames(bare), ["ask_user_question", "quiz"]);
+	const chatId = chatStore.createChat("Toggle bridge test").id;
+	const scoperCtx = {
+		chatId,
+		scopeId: () => null,
+		attachScope: () => {},
+		readScope: () => null,
+		createScope: () => ({ id: "scope_x", name: "x", objectives: [], roots: [], createdAt: "", updatedAt: "" }),
+		writeScope: () => {},
+		mintTopicId: () => "t_x",
+		mintObjectiveId: () => "obj_x",
+		now: () => "",
+	};
+
+	it("a job-tool delta is a no-op on the scoper's registry (no toggleable tools there)", () => {
+		const scoper = createScoperAgent(scoperCtx, { engine: fauxEngine(), toolToggles: { research: false } });
+		assert.deepEqual(toolNames(scoper), ["scope", "scope_create", "scope_edit"]);
 	});
 
-	it("flows into the prober's registry; probe_done survives everything", () => {
-		const chatId = chatStore.createChat("Toggle bridge test").id;
-		const ctx: ProberToolContext = { chatId, chatStore, deliver: () => {}, jobStore, spawn: () => {} };
-		const prober = createProberAgent(ctx, { engine: fauxEngine(), toolToggles: { ask_user_question: false } });
-		const names = toolNames(prober);
-		assert.ok(!names.includes("ask_user_question"), "the delta dropped the tool");
-		assert.ok(names.includes("probe_done"), "probe_done always-on");
+	it("the scoper's always-on registry ignores every delta", () => {
+		const scoper = createScoperAgent(scoperCtx, { engine: fauxEngine(), toolToggles: { scope: false, scope_edit: false } });
+		// The scope tools are NOT in TOGGLEABLE_TOOLS — the delta never reaches them.
+		assert.deepEqual(toolNames(scoper), ["scope", "scope_create", "scope_edit"]);
 	});
 
 	it("an explicitly injected opts.tools registry is NEVER toggle-filtered", () => {
-		const teacher = createTeacherAgent(undefined, {
+		const scoper = createScoperAgent(scoperCtx, {
 			engine: fauxEngine(),
 			tools: {
 				quiz: {
@@ -65,7 +71,7 @@ describe("AgentBuildOptions.toolToggles (the P2 bridge)", () => {
 			},
 			toolToggles: { quiz: false },
 		});
-		assert.deepEqual(toolNames(teacher), ["quiz"]);
+		assert.deepEqual(toolNames(scoper), ["quiz"]);
 	});
 });
 

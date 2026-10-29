@@ -1,8 +1,7 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import {
-	createPracticeAgent,
-	createProberAgent,
-	createTeacherAgent,
+	createClassAgent,
+	createScoperAgent,
 	type AgentBuildOptions,
 	type TeachingAgent,
 } from "../agent/teacher-agent.ts";
@@ -24,27 +23,30 @@ import {
 	setJobRespawn,
 	setTurnRunner,
 	settleSteers,
-	steerLiveChat,
 	unregisterLiveAgent,
 } from "./jobs.ts";
 import { runPiTurn } from "./pi/ui-stream.ts";
 import { collectToolCallIds } from "./pi/call-ids.ts";
 import { providerEventNote } from "../agent/provider-events.ts";
 import { effectiveSettings, stores } from "./stores.ts";
-import { searchAvailable, searchProvider } from "./search.ts";
+import { saveScope, createScopeWithObjective, getScope as getScopeRecord, readCheatsheet, grindView, landBatch } from "./scopes.ts";
+import { generateCheatsheet } from "./cheatsheets.ts";
+import { validateDraft } from "./exercise-gen.ts";
+import { walkTopics } from "../core/contracts/scope.ts";
+import { searchProvider } from "./search.ts";
 import { providerKeyPresent } from "./keys.ts";
 import {
 	extractionEnabled,
-	graphToolsEnabled,
 	resolveConversationSpec,
 	resolveRoleSpec,
 } from "../core/settings-resolution.ts";
-import { modelsNotConfigured, providerKeyMissing as providerKeyMissingEnvelope, type ProviderKeyMissing } from "../core/settings.ts";
+import { newObjectiveId as mintObjectiveId, newTopicId as mintTopicId } from "../store/scope.ts";
+import { modelsNotConfigured, providerKeyMissing as providerKeyMissingEnvelope } from "../core/settings.ts";
 import { beginTurn, endTurn } from "./turn-liveness.ts";
 import { applyParkedDismissal } from "./dismissal-park.ts";
 import { registerTurn, rememberTurnFailure, unregisterTurn } from "./turn-runs.ts";
 import { persistTurn, triggerExtraction, TurnPersistenceError } from "./turn-service.ts";
-import { hasProbeDone, danglingQuestionOf } from "../core/native-messages.ts";
+import { danglingQuestionOf } from "../core/native-messages.ts";
 import { composeInstructions } from "../agent/teacher-agent.ts";
 import { ensureCompacted, kickCompaction, effectiveThresholdTokens } from "./compaction.ts";
 import { catalogContextLimits, refreshConnectionCatalog } from "./model-catalog.ts";
@@ -149,7 +151,7 @@ setJobRespawn((jobId) => void jobRunner.runJob(jobId));
 /** The route-facing entry: parse {chatId, input} and run one turn. */
 export async function handleChatRequest(
 	req: Request,
-	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean }) => TeachingAgent,
+	buildAgent?: (opts: AgentBuildOptions) => TeachingAgent,
 ): Promise<Response> {
 	let body: { chatId?: unknown; input?: unknown };
 	try {
@@ -179,11 +181,24 @@ export async function handleChatRequest(
 export async function handleChatInput(
 	chatId: string,
 	input: TurnInput,
-	buildAgent?: (opts: AgentBuildOptions & { teaching: boolean }) => TeachingAgent,
+	buildAgent?: (opts: AgentBuildOptions) => TeachingAgent,
 ): Promise<Response> {
 	let record = stores.chatStore.getChat(chatId);
 	if (!record) {
 		return Response.json({ error: "Unknown chat" }, { status: 404 });
+	}
+
+	// THE SCOPE-OR-CLASS LAW (ADR 0003 extends the fork simplification
+	// 2026-02): teaching and practice sessions are RETIRED — the product is
+	// scope → cheatsheets → exercises → grind, walked by two chat kinds: the
+	// scoper interview and the Class. Old teach/practice chats stay readable
+	// as history, but a new turn on them refuses honestly (placement mirrors
+	// the model gate: before any liveness effects).
+	if (record.kind !== "scope" && record.kind !== "class") {
+		return Response.json(
+			{ error: "This session kind is retired — start a scope session (the interview) or a Class instead." },
+			{ status: 400 },
+		);
 	}
 
 	// THE UNIVERSAL TURN GATE (BYOK, owner, 2026-09-22): a turn needs the
@@ -249,12 +264,12 @@ export async function handleChatInput(
 			engine: piEngineForSpec(conversation, true),
 			canStart: () => connectionBackgroundAllowed(conversation.provider),
 			modelId: modelIdForCompaction,
-			kind: record.kind === "practice" ? "practice" : hasProbeDone(record.messages) ? "teach" : "probe",
+			kind: "teach", // the scoper's interviews and the Class — the compactable kinds
 			thresholdTokens: effectiveThresholdTokens(
 				effective.compaction?.thresholdTokens,
 				catalogContextLimits().get(modelIdForCompaction),
 			),
-			systemPromptTokens: Math.ceil(composeInstructions(record.kind === "practice" ? "practice" : "teacher").length / 4),
+			systemPromptTokens: Math.ceil(composeInstructions(record.kind === "class" ? "class" : "scoper").length / 4),
 		},
 		chatId,
 	);
@@ -352,13 +367,6 @@ export async function handleChatInput(
 		});
 	};
 
-	// AGENT CONSTRUCTION BRANCH (docs/probe-teach-split.md §2): the transcript
-	// is the seam — a probe_done call in the record means the probe is
-	// concluded: build the TEACHER (planning + the full toolset). Otherwise
-	// the session is still probing: build the PROBER (quiz/ask + probe_done).
-	// Both share this whole composition (write-ahead persist, liveness,
-	// steers, usage, extraction) — only the agent differs.
-	const teaching = hasProbeDone(merged);
 	// BYOK (owner, 2026-09-22): the conversation chain was resolved by the
 	// turn gate above (chat.model override → strong slot → refused) — the
 	// engine build is pure from here; thinking levels clamp natively.
@@ -404,68 +412,61 @@ export async function handleChatInput(
 		// prompt fresh per turn, swapping in any enabled override segments.
 		promptSwitches: effective.agent.prompts,
 	};
-	// PRACTICE BRANCH (owner design, 2026-10-04): a kind:"practice"
-	// session builds the practitioner from turn 1 — no prober→teacher
-	// split, no plan/question/job tools; the whole registry is
-	// problem + conclude. buildAgent stays honored (the test seam is
-	// uniform across kinds).
+	// AGENT CONSTRUCTION — selected by session kind: the SCOPER for scope
+	// sessions, the CLASS agent for Classes (ADR 0003 — a walker with four
+	// read/pose tools and NO scope-write seam; its only writes are spawned
+	// exercises, and attempts never pass through here — the client POSTs
+	// the grind seam). Teaching/practice wiring died with their kinds (fork
+	// simplification 2026-02); buildAgent stays honored (the test seam).
 	const constructed: TeachingAgent = buildAgent
-		? buildAgent({ ...agentOpts, teaching })
-		: record.kind === "practice"
-			? createPracticeAgent(
+		? buildAgent(agentOpts)
+		: record.kind === "class"
+			? createClassAgent(
 					{
-						chatId,
-						chatStore: stores.chatStore,
-						// TARGET VALIDATION (owner round 9): the practice tools read the
-						// WHOLE graph fresh per pose — targets validate against every
-						// proposition, not just the session's picks (pickless sessions
-						// and future graph-tools poses stay valid).
-						graphNodes: () => stores.graphStore.readNodes(),
-						// THE RARELY-NEEDED SET (owner round 10): research + pdf jobs
-						// (same runner/gating as the teacher's — research honestly
-						// absent when no engine is live) and the map readers behind
-						// the SAME settings gate as the prober's.
-						jobs: {
-							chatId,
-							jobStore: stores.jobStore,
-							spawn: (job, input) => void jobRunner.runJob(job.id, input),
-							searchAvailable,
+					chatId,
+						scopeId: () => stores.chatStore.getChat(chatId)?.scopeId ?? null,
+						classRootId: () => stores.chatStore.getChat(chatId)?.classRootId ?? null,
+						readScope: (sid) => getScopeRecord(sid),
+						readCheatsheet: (sid, topicId) => readCheatsheet(sid, topicId),
+						generateCheatsheet: (sid, topicId) => generateCheatsheet(sid, topicId),
+						readLeafPool: (sid, topicId) => {
+							const view = grindView(sid);
+							if (!view) return null;
+							return {
+								exercises: view.exercises
+									.filter((e) => e.topicId === topicId && !e.buried)
+									.map((exercise) => ({ exercise, stats: view.statsById[exercise.id] ?? null })),
+								rollup: view.rollups[topicId] ?? null,
+							};
 						},
-						...(graphToolsEnabled(effective) ? { graph: { chatStore: stores.chatStore, graphStore: stores.graphStore } } : {}),
+						readExercise: (sid, exerciseId) => grindView(sid)?.exercises.find((e) => e.id === exerciseId) ?? null,
+						spawnExercise: (sid, raw) => {
+							const scope = getScopeRecord(sid);
+							if (!scope) return { problem: "scope no longer exists" };
+							const known = new Set(walkTopics(scope.roots).map((t) => t.id));
+							const v = validateDraft(raw, known);
+							if ("problem" in v) return v;
+							const batchId = landBatch(sid, [v.draft.topicId], [v.draft]);
+							const landed = (grindView(sid)?.exercises ?? []).filter((e) => e.batchId === batchId).at(-1) ?? null;
+							return landed ? { exercise: landed } : { problem: "spawn landed but could not be read back" };
+						},
 					},
 					agentOpts,
 				)
-			: teaching
-			? createTeacherAgent(
+			: createScoperAgent(
 					{
 						chatId,
-						chatStore: stores.chatStore,
-						jobStore: stores.jobStore,
-						spawn: (job, input) => void jobRunner.runJob(job.id, input),
-						// The registry drop's signal (2026-09-20): no live engine
-						// = no research tool in the teacher's registry.
-						searchAvailable,
+						scopeId: () => stores.chatStore.getChat(chatId)?.scopeId ?? null,
+						attachScope: (sid) => stores.chatStore.attachScope(chatId, sid),
+						readScope: (sid) => getScopeRecord(sid),
+						createScope: (name, objectiveText) => createScopeWithObjective(name, objectiveText),
+						writeScope: (scope) => saveScope(scope),
+						mintTopicId: mintTopicId,
+						mintObjectiveId: mintObjectiveId,
+						now: () => new Date().toISOString(),
 					},
 					agentOpts,
-				)
-			: createProberAgent(
-					{
-						chatId,
-						chatStore: stores.chatStore,
-						deliver: (steer) => void deliverJobResult(steer),
-						// Fix wave (2026-09-20): the prober carries research + pdf
-						// dispatch (owner ruling — phase-omnipresent), so its ctx
-						// needs the same job wiring as the teacher's.
-						jobStore: stores.jobStore,
-						spawn: (job, input) => void jobRunner.runJob(job.id, input),
-						searchAvailable,
-						// The map reader (wave 7): the prober reads the learner's
-						// knowledge graph through tools when the gate opens —
-						// graph master switch AND the agent.graphTools toggle.
-						...(graphToolsEnabled(effective) ? { graphStore: stores.graphStore } : {}),
-					},
-					agentOpts,
-				);
+			);
 
 	// A test-injected agent gets no usage collector (tests assert the
 	// transcript, not the money channel); when it's ours, usage flows through
@@ -550,8 +551,9 @@ export async function handleChatInput(
 				// extraction, its auditor — dies with the master switch.
 				// PRACTICE (owner, 2026-10-04): practice sessions write nothing —
 				// no extraction, no graph, no coverage (v1: the session itself
-				// is the deliverable).
-				if ((!requestCycle || requestCycle.dispatched) && record.kind !== "practice" && extractionEnabled(effective.graph)) {
+				// is the deliverable). CLASS (ADR 0003): same — a pure conduit,
+				// the graph stays import-only.
+				if ((!requestCycle || requestCycle.dispatched) && record.kind !== "practice" && record.kind !== "class" && extractionEnabled(effective.graph)) {
 					// Fresh per-turn read of the graph section's chunk budget
 					// (extraction-UX redesign, 2026-09-24): the trigger compares
 					// against it and the pipeline's batches share it.
@@ -607,12 +609,12 @@ export async function handleChatInput(
 							engine: kickEngine,
 							canStart: () => connectionBackgroundAllowed(spec.provider),
 							modelId: kickModelId,
-							kind: freshRecord.kind === "practice" ? "practice" : hasProbeDone(freshRecord.messages) ? "teach" : "probe",
+							kind: "teach", // the scoper's interviews — the only compactable kind left
 							thresholdTokens: effectiveThresholdTokens(
 								fresh.compaction?.thresholdTokens,
 								catalogContextLimits().get(kickModelId),
 							),
-							systemPromptTokens: Math.ceil(composeInstructions(freshRecord.kind === "practice" ? "practice" : "teacher").length / 4),
+							systemPromptTokens: Math.ceil(composeInstructions("scoper").length / 4),
 						};
 					}, chatId);
 			},

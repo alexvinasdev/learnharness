@@ -17,10 +17,13 @@
 export const FRAGMENT_RE = /^\d+-[\w.-]+\.md$/;
 
 /** Which agent's prompt directory to compose. */
-/** Practice (2026-10-04): composes ONLY its own directory — no shared
- *  teaching base, no shared fragments (the doctrine contradicts the
- *  teaching philosophy; its 00-base.md plays the base role). */
-export type PromptAgent = "prober" | "teacher" | "practice";
+/** Scoper (fork 2026-01-26): the scope-session interviewer — composes its
+ *  own directory + the curated shared appendix (no teaching base, no
+ *  question-tool mechanics).
+ *  Class (ADR 0003): the session that walks the scope's leaves — same
+ *  composition law as the scoper (own directory + the curated shared
+ *  appendix; its 00-base.md plays the base role). */
+export type PromptAgent = "scoper" | "class";
 
 /** One segment of one agent's composed prompt. */
 export interface PromptSegmentInfo {
@@ -41,10 +44,12 @@ export interface PromptSegmentInfo {
 
 /** Validate a segment path against the mirror-layout rules (see module
  *  doc). Exported for the routes, which also check membership in the
- *  CURRENT source segment list. */
+ *  CURRENT source segment list. The scoper and the class agent are the
+ *  agents since the 2026-02 retirement; `system-prompt.md` stays valid
+ *  (legacy switches must keep reading as paths). */
 export function isValidSegmentPath(segmentPath: string): boolean {
 	if (segmentPath === "system-prompt.md") return true;
-	const m = /^(prober|teacher|practice|shared)\/([\w.-]+\.md)$/.exec(segmentPath);
+	const m = /^(scoper|class|shared)\/([\w.-]+\.md)$/.exec(segmentPath);
 	if (!m || m[2] === undefined) return false;
 	return FRAGMENT_RE.test(m[2]);
 }

@@ -22,8 +22,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createProberAgent, createTeacherAgent, type TeachingAgent } from "../src/agent/teacher-agent.ts";
-import type { ProberToolContext } from "../src/agent/tools.ts";
+import { createScoperAgent, type TeachingAgent } from "../src/agent/teacher-agent.ts";
 import { jobStore } from "../src/store/jobs.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { createFauxCore } from "@earendil-works/pi-ai";
@@ -37,13 +36,20 @@ function fauxEngine(): PiEngine {
 }
 
 describe("the getApiKey-hook fix (native per-provider key resolution)", () => {
-	it("teacher and prober builds expose NO getApiKey hook — pi-ai resolves keys natively", () => {
+	it("the scoper build exposes NO getApiKey hook — pi-ai resolves keys natively", () => {
 		const chatId = chatStore.createChat("getApiKey pin").id;
-		const ctx: ProberToolContext = { chatId, chatStore, deliver: () => {}, jobStore, spawn: () => {} };
-		const builds: TeachingAgent[] = [
-			createTeacherAgent(undefined, { engine: fauxEngine() }),
-			createProberAgent(ctx, { engine: fauxEngine() }),
-		];
+		const ctx = {
+			chatId,
+			scopeId: () => null,
+			attachScope: () => {},
+			readScope: () => null,
+			createScope: () => ({ id: "scope_x", name: "x", objectives: [], roots: [], createdAt: "", updatedAt: "" }),
+			writeScope: () => {},
+			mintTopicId: () => "t_x",
+			mintObjectiveId: () => "obj_x",
+			now: () => "",
+		};
+		const builds: TeachingAgent[] = [createScoperAgent(ctx, { engine: fauxEngine() })];
 		for (const agent of builds) {
 			assert.equal(
 				(agent as unknown as { getApiKey?: unknown }).getApiKey,

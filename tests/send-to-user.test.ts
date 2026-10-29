@@ -36,7 +36,7 @@ after(() => {
 });
 
 const { sendToUserTool } = await import("../src/agent/tools/send-to-user.ts");
-const { createProberAgent, createTeacherAgent, createPracticeAgent, composeInstructions } = await import("../src/agent/teacher-agent.ts");
+const { createScoperAgent, composeInstructions } = await import("../src/agent/teacher-agent.ts");
 const { SEND_TO_USER_TOOL, activeProblemOf, asAgentMessages, newUserMessage, sendToUserText, toLlmMessages, userFacingTextOf } = await import("../src/core/native-messages.ts");
 const { coverageOf, messageFingerprint, messageViewLines, teacherProseBlocks } = await import("../src/core/coverage.ts");
 const { projectView } = await import("../src/core/view.ts");
@@ -57,10 +57,20 @@ function scripted(provider: string, id: string, steps: FauxResponseStep[] = []) 
 }
 
 const chatId = chatStore.createChat("Synthetic output gate").id;
+// The scoper is the only agent (2026-02): a minimal ctx of closures stands
+// in for the handler's store wiring.
+const scoperCtx = {
+	chatId,
+	scopeId: () => null,
+	attachScope: () => {},
+	readScope: () => null,
+	createScope: () => ({ id: "scope_x", name: "x", objectives: [], roots: [], createdAt: "", updatedAt: "" }),
+	writeScope: () => {},	mintTopicId: () => "t_x",
+	mintObjectiveId: () => "obj_x",
+	now: () => "",
+};
 const factories = {
-	prober: (opts: AgentBuildOptions) => createProberAgent({ chatId, chatStore, jobStore, deliver: () => {}, spawn: () => {} }, opts),
-	teacher: (opts: AgentBuildOptions) => createTeacherAgent({ chatId, chatStore, jobStore, spawn: () => {} }, opts),
-	practice: (opts: AgentBuildOptions) => createPracticeAgent({ chatId, chatStore }, opts),
+	scoper: (opts: AgentBuildOptions) => createScoperAgent(scoperCtx, opts),
 };
 
 function outputCall(message: string | number | null = "An explanation.", id = "send-1") {
@@ -108,11 +118,9 @@ describe("send_to_user model gate", () => {
 		});
 	}
 
-	it("explicitly injected teacher/practice test registries remain unchanged", () => {
+	it("an explicitly injected scoper test registry remains unchanged", () => {
 		const { engine } = scripted("anthropic", "claude-opus-5-5");
-		for (const factory of [factories.teacher, factories.practice]) {
-			assert.deepEqual(factory({ engine, tools: {} }).state.tools, []);
-		}
+		assert.deepEqual(factories.scoper({ engine, tools: {} }).state.tools, []);
 	});
 
 	it("background agents do not acquire a learner-output tool", async () => {
@@ -251,116 +259,11 @@ describe("send_to_user native flow (offline)", () => {
 				return fauxAssistantMessage([fauxText("Final plain reply.")]);
 			},
 		]);
-		const agent = createTeacherAgent(undefined, { engine });
+		const agent = createScoperAgent(scoperCtx, { engine });
 		await agent.prompt("Synthetic request.");
 		assert.equal(faux.state.callCount, 2);
 	});
 
-	for (const outputFirst of [true, false]) {
-		it(`output + practice problem stops after the pose (${outputFirst ? "output first" : "problem first"})`, async () => {
-			const output = outputCall("Try this practice problem.");
-			const problem = fauxToolCall("problem", {
-				statement: "What is two plus two?", mode: "recall", modelSolution: "Four.",
-			}, { id: "problem-1" });
-			const { engine, faux } = scripted("anthropic", "claude-opus-5-5", [
-				fauxAssistantMessage(outputFirst ? [output, problem] : [problem, output], { stopReason: "toolUse" }),
-				fauxAssistantMessage("Premature continuation must not run."),
-			]);
-			const agent = createPracticeAgent({ chatId, chatStore }, { engine });
-			await agent.prompt("Pose a synthetic problem.");
-			assert.equal(faux.state.callCount, 1, "wait for the learner after a successful mixed-batch pose");
-			const results = agent.state.messages.filter((m) => m.role === "toolResult");
-			assert.equal(results.length, 2);
-			assert.ok(results.every((m) => !m.isError));
-		});
-	}
-
-	for (const stopReason of ["error", "aborted"] as const) {
-		it(`${stopReason} mixed output/problem generation never executes or activates the pose`, async () => {
-			const { engine, faux } = scripted("anthropic", "claude-opus-5-5", [
-				fauxAssistantMessage([
-					outputCall("Undelivered introduction."),
-					fauxToolCall("problem", {
-						statement: "What is two plus two?", mode: "recall", modelSolution: "Four.",
-					}, { id: "unfinished-problem" }),
-				], { stopReason }),
-			]);
-			const agent = createPracticeAgent({ chatId, chatStore }, { engine });
-			await agent.prompt("Pose a synthetic problem.");
-			assert.equal(faux.state.callCount, 1);
-			assert.ok(!agent.state.messages.some((m) => m.role === "toolResult"));
-			const messages = agent.state.messages.map((m, i) => ({ ...m, id: `interrupted-${i}` })) as LhMessage[];
-			assert.equal(activeProblemOf(messages), null);
-			assert.deepEqual(prose(projectView(messages)), []);
-		});
-	}
-
-	it("a rejected mixed-batch practice pose retries, then stops after the successful pose", async () => {
-		const { engine, faux } = scripted("anthropic", "claude-opus-5-5", [
-			fauxAssistantMessage([
-				outputCall("Try this practice problem."),
-				fauxToolCall("problem", { statement: "Incomplete problem.", mode: "recall" }, { id: "bad-problem" }),
-			], { stopReason: "toolUse" }),
-			fauxAssistantMessage([
-				outputCall("Here is the corrected problem.", "send-2"),
-				fauxToolCall("problem", {
-					statement: "What is two plus two?", mode: "recall", modelSolution: "Four.",
-				}, { id: "good-problem" }),
-			], { stopReason: "toolUse" }),
-			fauxAssistantMessage("Premature continuation must not run."),
-		]);
-		const agent = createPracticeAgent({ chatId, chatStore }, { engine });
-		await agent.prompt("Pose a synthetic problem.");
-		assert.equal(faux.state.callCount, 2, "failed authoring retries; successful pose waits for the learner");
-		const results = agent.state.messages.filter((m) => m.role === "toolResult" && m.toolName === "problem");
-		assert.equal(results.length, 2);
-		assert.ok(results[0]?.role === "toolResult" && results[0].isError);
-		assert.ok(results[1]?.role === "toolResult" && !results[1].isError);
-	});
-
-	it("output + question streams, persists natively, replays, and reloads as prose before the question", async () => {
-		const lesson = "**Synthetic lesson:** four is twice two. $2 + 2 = 4$";
-		const quiz = {
-			type: "check", nodeId: "synthetic", question: "What is two plus two?",
-			options: [{ label: "Four", value: "4" }, { label: "Five", value: "5" }],
-			correctAnswer: "4", explanation: "Add two pairs.",
-		};
-		const { engine, faux } = scripted("openrouter", "anthropic/claude-opus-5.5", [
-			fauxAssistantMessage([
-				fauxThinking("Synthetic private thought."), outputCall(lesson),
-				fauxToolCall("quiz", quiz, { id: "quiz-1" }),
-			], { stopReason: "toolUse" }),
-		]);
-		const chat = chatStore.createChat("Synthetic native output flow");
-		const user = newUserMessage("Explain synthetic arithmetic.");
-		chatStore.saveMessages(chat.id, [user]);
-		const agent = createTeacherAgent(undefined, { engine, messages: asAgentMessages([user]) });
-		const handle = runPiTurn({
-			agent,
-			updateFlushMs: 0,
-			onFinish: (messages, aborted) => { persistTurn(chatStore, chat.id, 1, messages, aborted); },
-		});
-		const wire = await new Response(handle.subscribe()).text();
-		assert.ok(wire.endsWith("data: [DONE]\n\n"));
-		assert.equal(faux.state.callCount, 1, "question stops the mixed batch as before");
-		const saved = chatStore.getChat(chat.id)!.messages;
-		const response = saved.find((m) => m.role === "assistant")!;
-		assert.equal(response.role, "assistant");
-		if (response.role !== "assistant") assert.fail("missing assistant");
-		assert.deepEqual(response.content.map((c) => c.type), ["thinking", "toolCall", "toolCall"]);
-		assert.deepEqual(response.content[1], outputCall(lesson));
-		assert.ok(saved.some((m) => m.role === "toolResult" && m.toolName === SEND_TO_USER_TOOL), "native output ack persists");
-		assert.ok(!saved.some((m) => m.role === "toolResult" && m.toolName === "quiz"), "question placeholder remains transient");
-		const providerHistory = toLlmMessages(asAgentMessages(saved));
-		assert.deepEqual(providerHistory.find((m) => m.role === "assistant")!.content, response.content, "next request keeps native call/thinking structure");
-		assert.deepEqual(prose(projectView(saved)), [lesson]);
-		const parts = projectView(saved).flatMap((m) => m.parts);
-		assert.ok(parts.findIndex((p) => p.type === "text") < parts.findIndex((p) => p.type === "tool-quiz"));
-		const client = new SessionModel({ chatId: chat.id, initialMessages: [user], fetch: globalThis.fetch });
-		await client.consumeStream(new Response(wire));
-		assert.deepEqual(prose(client.getState().messages), [lesson], "native event replay shows the lesson exactly once");
-		assert.deepEqual(prose(projectView(JSON.parse(JSON.stringify(saved)))), [lesson], "reload preserves the lesson");
-		assert.deepEqual(teacherProseBlocks(saved), [lesson]);
-		assert.equal(sessionMarkdown(saved).split(lesson).length - 1, 1);
-	});
+	// The practice-pose and teach-question stop-semantics tests died with
+	// their agents (2026-02); the scoper has neither tool.
 });

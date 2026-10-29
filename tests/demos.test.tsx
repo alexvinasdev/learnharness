@@ -55,12 +55,9 @@ import { createJobRunner, demoModelOverride, visualModelOverride } from "../src/
 import { runVisualMaker } from "../src/agent/subagents/visual-maker.ts";
 import { buildAbortSteer, buildSubagentSteer, isSubagentFailure, setSteerUiInverted, type SteerMessage } from "../src/core/contracts.ts";
 import type { JobRecord } from "../src/core/contracts.ts";
-import { createTeacherTools } from "../src/agent/tools.ts";
 import { chatStore } from "../src/store/chats.ts";
 import { jobStore } from "../src/store/jobs.ts";
-import { handleChatRequest } from "../src/server/chat-handler.ts";
 import { runningTurn } from "../src/server/turn-runs.ts";
-import { createTeacherAgent } from "../src/agent/teacher-agent.ts";
 import { projectView as projectNative } from "../src/core/view.ts";
 import type { PiEngine } from "../src/agent/models.ts";
 
@@ -859,134 +856,6 @@ describe("demo/visual job runners", () => {
 		assert.equal(typeof (part as { output?: unknown }).output, "string", "part output is the ack, not the result");
 	});
 
-	it("runJob still steers on visual failure and the job lands error", async () => {
-		const chat = chatStore.createChat("Test: visual runner failure");
-		createdChats.push(chat.id);
-		chatStore.saveMessages(chat.id, [
-			{ id: "u1", role: "user", content: "draw it", timestamp: 1 } as never,
-			{
-				id: "a1",
-				role: "assistant",
-				content: [{ type: "toolCall", id: "call-v1", name: "visual", arguments: { brief: "b" } as never }],
-				api: "openai-completions",
-				provider: "openrouter",
-				model: "test",
-				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				stopReason: "stop",
-				timestamp: 1,
-			} as never,
-			{
-				id: "r1",
-				role: "toolResult",
-				toolCallId: "call-v1",
-				toolName: "visual",
-				content: [{ type: "text", text: "Dispatched." }],
-				details: "Dispatched.",
-				isError: false,
-				timestamp: 1,
-			} as never,
-		]);
-
-		const job = jobStore.createJob({ kind: "visual", chatId: chat.id, toolCallId: "call-v1" });
-		createdJobs.push(job.id);
-
-		visualModelOverride.current = scriptedModel([{ text: "cannot" }]);
-		const { steers, runner } = testRunner();
-		try {
-			await runner.runJob(job.id);
-		} finally {
-			visualModelOverride.current = undefined;
-		}
-
-		const errored = jobStore.getJob(job.id)!;
-		assert.equal(errored.status, "error");
-		assert.match(errored.error ?? "", /never wrote an SVG/);
-
-		assert.ok(steers[0], "failure still delivers a steer — the teacher learns the outcome");
-		const result = (steers[0]!.details as { result: unknown }).result as { svg: string; notes?: string };
-		assert.equal(result.svg, "");
-		assert.match(result.notes ?? "", /^FAILED:/);
-	});
-
-	it("dispatch through a teacher turn: the call acks mid-turn and the runner completes in the background", async () => {
-		const chat = chatStore.createChat("Test: demo spawn dispatch");
-		createdChats.push(chat.id);
-		// BYOK turn gate (owner, 2026-09-22): the scripted chat needs a
-		// conversation model — the per-chat pin, exactly like the setup flow.
-		chatStore.saveSettings(chat.id, { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" } });
-
-		// A teacher that calls demo on turn 1, then continues in the SAME turn.
-		const teacher = scriptedModel([
-			{ toolCalls: [{ toolCallId: "call-d2", toolName: "demo", input: DEMO_INPUT }] },
-			{ text: "Here it is." },
-		]);
-
-		// The overrides must be live BEFORE the request — dispatch fires the
-		// runner mid-stream, inside the tool execute.
-		demoModelOverride.current = scriptedModel([
-			{ toolCalls: [{ toolCallId: "w1", toolName: "write_demo", input: { html: GOOD_HTML } }] },
-			{ toolCalls: [{ toolCallId: "r1", toolName: "run_demo", input: {} }] },
-			{ text: "Sweep it." },
-		]);
-		headlessOverride.current = fakeHeadless();
-		const { steers, runner } = testRunner();
-
-		try {
-			const ack = await handleChatRequest(
-				new Request("http://test/api/chat", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						chatId: chat.id,
-						// Wave B: the input-events contract — one event,
-						// never a client transcript.
-						input: { type: "text", text: "teach me compounding" },
-					}),
-				}),
-				// The handler hands the factory the native build options
-				// (messages are the merged record; the record IS the agent
-				// state — no adapter conversion).
-				(opts) =>
-					createTeacherAgent(undefined, {
-						engine: teacher,
-						messages: opts.messages,
-						tools: createTeacherTools({
-							chatId: chat.id,
-							chatStore,
-							jobStore,
-							spawn: (job, input) => void runner.runJob(job.id, input),
-						}),
-					}),
-			);
-			if (ack.status !== 200) assert.fail(`expected 200 ack, got ${ack.status}: ${await ack.text()}`);
-			await drainRunning(chat.id);
-
-			const job = jobStore.findJobByToolCallId(chat.id, "call-d2");
-			assert.ok(job, "dispatch created a job at tool-execute time");
-			assert.equal(job!.kind, "demo");
-			createdJobs.push(job!.id);
-
-			// The background runner (fire-and-forget) completes with the overrides.
-			await waitFor(() => jobStore.getJob(job!.id)!.status !== "running", 8000, "demo job completion");
-			const done = jobStore.getJob(job!.id)!;
-			assert.equal(done.status, "done");
-
-			const saved = projectNative(chatStore.getChat(chat.id)!.messages);
-			const part = saved[1]!.parts.find((p) => p.type === "tool-demo");
-			assert.ok(part && part.type === "tool-demo", "demo tool part persisted");
-			assert.equal(part.state, "output-available", "the part resolved with the ack at dispatch time");
-			assert.match(String((part as { output?: unknown }).output), /fire-and-forget/);
-
-			assert.equal(steers.length, 1, "one job, one steer");
-			assert.equal((steers[0]!.details as { jobId: string }).jobId, job!.id);
-
-			// Idempotency: dispatch dedupes by toolCallId — no second job.
-			assert.equal(jobStore.listJobs(chat.id).length, 1, "no duplicate job for the same tool part");
-		} finally {
-			demoModelOverride.current = undefined;
-			headlessOverride.current = undefined;
-		}
-	});
 });
 
 // ─── 6. registry wiring ──────────────────────────────────────────────────────

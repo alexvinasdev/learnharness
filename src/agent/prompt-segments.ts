@@ -34,13 +34,17 @@ import { FRAGMENT_RE, isValidSegmentPath, type PromptAgent, type PromptSegmentIn
 
 const PROMPTS_DIR = path.join(PATHS.root, "src", "agent", "prompts");
 
-/** Shared fragments the PRACTICE agent composes: the VOICE, ACCURACY,
- *  and MENTAL-MODEL chunks joined the formatting guide (owner rounds 13
- *  and the prompt-refinement round of 2026-10-07) — personality, the
- *  truth contract, and the thinking-fields doctrine are ONE law across
- *  every agent. The question/confidence/file mechanics stay out
- *  (practice has no such tools). */
-const PRACTICE_SHARED_FRAGMENTS = ["10-voice.md", "15-accuracy.md", "16-mental-model.md", "40-formatting.md"];
+/** Shared fragments the STANDALONE agents compose (formerly practice's
+ *  allowlist, owner rounds 13 + the 2026-10-07 refinement): voice,
+ *  accuracy, the mental-model doctrine and formatting — one law across
+ *  agents; the question/confidence/file mechanics stay out (no such
+ *  tools). The class agent composes the same curated set. */
+const STANDALONE_SHARED_FRAGMENTS = ["10-voice.md", "15-accuracy.md", "16-mental-model.md", "40-formatting.md"];
+
+/** Agents whose 00-base plays the base role: no teaching system-prompt,
+ *  own directory + the curated shared appendix. The scoper (2026-02) and
+ *  the class agent (ADR 0003). */
+const STANDALONE_AGENTS: ReadonlySet<PromptAgent> = new Set(["scoper", "class"]);
 
 /** Absolute path for an override file (unchecked — validate first). */
 function overrideFileFor(segmentPath: string): string {
@@ -71,7 +75,7 @@ export function listSourceSegments(agent: PromptAgent): Array<{ path: string; sh
 	// plays the base role), but the FORMATTING guide composes for every
 	// agent (owner, 2026-10-04 late): LaTeX delimiters and markdown apply
 	// in all settings — practice shares the $...$/$$...$$ authoring contract.
-	const segments: Array<{ path: string; shared: boolean; file: string }> = agent === "practice" ? [] : [
+	const segments: Array<{ path: string; shared: boolean; file: string }> = STANDALONE_AGENTS.has(agent) ? [] : [
 		{ path: "system-prompt.md", shared: true, file: PATHS.teacherPrompt },
 	];
 	const dir = path.join(PROMPTS_DIR, agent);
@@ -83,8 +87,8 @@ export function listSourceSegments(agent: PromptAgent): Array<{ path: string; sh
 	}
 	const sharedDir = path.join(PROMPTS_DIR, "shared");
 	if (fs.existsSync(sharedDir)) {
-		// The practice allowlist (owner, 2026-10-04 late): formatting only.
-		const allow = agent === "practice" ? PRACTICE_SHARED_FRAGMENTS : null;
+		// The standalone allowlist (scoper, class): formatting + voice only.
+		const allow = STANDALONE_AGENTS.has(agent) ? STANDALONE_SHARED_FRAGMENTS : null;
 		const sharedFragments = fs
 			.readdirSync(sharedDir)
 			.filter((f) => FRAGMENT_RE.test(f) && (allow === null || allow.includes(f)))
@@ -127,7 +131,7 @@ export function effectivePromptSegments(
 /** Every known segment path across both agents (route validation). */
 export function allSegmentPaths(): string[] {
 	const paths = new Set<string>();
-	for (const agent of ["prober", "teacher", "practice"] as const) {
+	for (const agent of ["scoper", "class"] as const) {
 		for (const segment of listSourceSegments(agent)) paths.add(segment.path);
 	}
 	return [...paths].sort();

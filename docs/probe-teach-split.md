@@ -1,5 +1,11 @@
 # The probe→teach agent split & plan-movement semantics
 
+> FORK AMENDMENT (2026-01-26, ADR 0001): the probe→teach seam survives only on SCOPED
+> sessions (the probe measures against scope topics and writes topic states). FREE
+> sessions (no scope) skip the probe entirely — the teacher opens from turn 1. The
+> handoff wake's text walks the scope (HANDOFF_TEXT in core/contracts/chat.ts); the
+> plan_init the original document describes is gone with the plan tree.
+
 Shared understanding reached 2026-09-11 (user + master session). This is the
 convergence record — the decided design, with reasoning. It is not a task
 list; implementation waves are planned against it.

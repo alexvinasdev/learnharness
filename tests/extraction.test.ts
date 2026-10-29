@@ -28,7 +28,6 @@ import { after, describe, it } from "node:test";
 import { createFauxCore, fauxAssistantMessage, fauxToolCall, type FauxResponseStep, type ToolCall, type Usage } from "@earendil-works/pi-ai";
 import type { PiEngine } from "../src/agent/models.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
-import { newPlanBlockMessage } from "../src/core/native-messages.ts";
 import { projectView as projectNative } from "../src/core/view.ts";
 import type {
 	AuditVerdicts,
@@ -1868,12 +1867,11 @@ describe("the chunked pipeline (extraction coverage)", () => {
 		const messages = () => record();
 		assert.equal(coverageOf(messages(), ledgers.readCoverage(), chatId).uncoveredCount, 0);
 
-		// Data parts are invisible to the extraction view — a plan-block
-		// marker append (whose data part splices into the projected view)
-		// does NOT re-open a covered message.
+		// UI-only markers are invisible to the extraction view — a marker
+		// append does NOT re-open a covered message.
 		chatStore.saveMessages(chatId, [
 			...record(),
-			newPlanBlockMessage("call_s2", { kind: "full", at: "2026-09-26T00:00:00.000Z", current: null, nodes: [], edges: [] }),
+			{ id: "mk_s2", role: "custom", customType: "problem-dismissed", content: "", display: false, details: {}, timestamp: 1 } as never,
 		]);
 		const afterAttach = coverageOf(messages(), ledgers.readCoverage(), chatId);
 		assert.equal(afterAttach.uncoveredCount, 0, "data parts don't change the fingerprint");

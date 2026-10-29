@@ -381,7 +381,6 @@ export function SettingsDialogBody({
 									<AgentSection
 										agent={record.agent}
 										models={record.models}
-										graph={record.graph}
 										compaction={record.compaction}
 										onModelsChange={(next: ModelsSettings) =>
 											void write("models", next)

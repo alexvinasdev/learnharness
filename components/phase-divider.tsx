@@ -14,7 +14,7 @@ import type { Phase3 } from "@/src/core";
  *
  * Quiet register (matches the old divider): hairline rules, small chips —
  * never a banner. Probe never renders a divider: phases only advance, so
- * probe is the start of the transcript and "Planning"/"Teaching" are the two
+ * probe is the start of the transcript and "Teaching" is the
  * visible seams.
  *
  * Owner, minimal-color round 2: the chip is LABEL-ONLY, deliberately — a
@@ -27,7 +27,6 @@ import type { Phase3 } from "@/src/core";
 /** Header-chip labels: the phases as the learner thinks of them. */
 const CHIP_LABEL: Record<Phase3, string> = {
 	probe: "Probing",
-	plan: "Planning",
 	teach: "Teaching",
 };
 
@@ -61,10 +60,8 @@ export function PhaseChip({ phase }: { phase: Phase3 }) {
  */
 export function PhaseDivider({ phase, nodeCount }: { phase: Phase3; nodeCount?: number }) {
 	if (phase === "probe") return null;
-	const label =
-		phase === "plan" && nodeCount
-			? `Plan · ${nodeCount} node${nodeCount === 1 ? "" : "s"}`
-			: CHIP_LABEL[phase];
+	void nodeCount;
+	const label = CHIP_LABEL[phase];
 	return (
 		<div className="my-4 flex w-full items-center gap-3" data-testid={`phase-divider-${phase}`}>
 			<span className="h-0 flex-1 border-t-2 border-dotted border-border/50" aria-hidden />
@@ -76,18 +73,3 @@ export function PhaseDivider({ phase, nodeCount }: { phase: Phase3; nodeCount?: 
 	);
 }
 
-/**
- * The node count for a plan seam: the first plan-op tree output in the
- * message that carries the seam (the plan_init that made the phase flip).
- * Structural slice of a UI message, same shape-of-shapes as core/phases.ts.
- */
-export function planNodeCount(
-	message: { parts: ReadonlyArray<{ type: string; state?: string; output?: unknown; [k: string]: unknown }> },
-): number | undefined {
-	for (const part of message.parts) {
-		if (!part.type.startsWith("tool-plan_") || part.state !== "output-available") continue;
-		const tree = (part.output as { tree?: { nodes?: unknown[] } } | undefined)?.tree;
-		if (tree && Array.isArray(tree.nodes) && tree.nodes.length > 0) return tree.nodes.length;
-	}
-	return undefined;
-}

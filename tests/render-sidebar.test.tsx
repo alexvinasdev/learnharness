@@ -14,8 +14,8 @@ import React from "react";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { SessionRow, timeAgo } from "../components/sidebar.tsx";
-import type { ChatListItem } from "../src/core/index.ts";
+import { SessionRow, ScopeRow, scopeGroups, timeAgo } from "../components/sidebar.tsx";
+import type { ChatListItem, ChatKind, ScopeSummary } from "../src/core/index.ts";
 
 function item(overrides: Partial<ChatListItem>): ChatListItem {
 	return {
@@ -25,9 +25,7 @@ function item(overrides: Partial<ChatListItem>): ChatListItem {
 		createdAt: "2026-01-01T00:00:00.000Z",
 		updatedAt: "2026-01-02T00:00:00.000Z",
 		messageCount: 4,
-		phase: "probe",
 		pendingQuestion: false,
-		pendingProblem: false,
 		busy: false,
 		compacting: false,
 		...overrides,
@@ -40,22 +38,20 @@ function render(chat: ChatListItem, active = false) {
 
 describe("SessionRow", () => {
 	it("no phase strips, no phase colors — the retired decoration", () => {
-		const html = render(item({ phase: "teach" }));
+		const html = render(item({}));
 		assert.ok(!html.includes("phase-strip"), "strip removed by design (too busy)");
 		assert.ok(!html.includes("bg-phase-"), "phase fills are retired app-wide");
 		assert.ok(!html.includes("border-phase-"), "phase rings are retired app-wide");
 	});
 
 	it("idle session: NO indicator — absence is the state", () => {
-		for (const phase of ["probe", "plan", "teach"] as const) {
-			const html = render(item({ phase }));
-			assert.ok(!html.includes("session-dot"), "no dots — the status language is spinner-only");
-			assert.ok(!html.includes("braille-spinner"), "idle never shows the spinner");
-		}
+		const html = render(item({}));
+		assert.ok(!html.includes("session-dot"), "no dots — the status language is spinner-only");
+		assert.ok(!html.includes("braille-spinner"), "idle never shows the spinner");
 	});
 
 	it("a pending question renders NO indicator — resting state, carried by the meta text", () => {
-		const html = render(item({ phase: "teach", pendingQuestion: true }));
+		const html = render(item({ pendingQuestion: true }));
 		assert.ok(!html.includes("session-dot"), "no dots");
 		assert.ok(!html.includes("braille-spinner"), "motion is reserved for working");
 		assert.ok(html.includes("Waiting for input"), "the meta line's text");
@@ -63,7 +59,7 @@ describe("SessionRow", () => {
 	});
 
 	it("a working session (turn in flight) renders the braille spinner — the ONLY indicator", () => {
-		const html = render(item({ phase: "plan", busy: true }));
+		const html = render(item({ busy: true }));
 		assert.ok(html.includes('data-testid="braille-spinner"'), "the spinner");
 		assert.ok(html.includes("braille-frame"), "CSS-animated frames");
 		assert.ok((html.match(/class="braille-frame"/g) ?? []).length === 10, "all ten frames");
@@ -98,8 +94,8 @@ describe("SessionRow", () => {
 		assert.match(idle, /\d{4}-\d{2}-\d{2}/, "idle shows the ISO date");
 	});
 
-	it("pending questions use the same wording for teach and practice with recent and old dates", () => {
-		for (const kind of ["teach", "practice"] as const) {
+	it("pending questions use the same wording for every kind with recent and old dates", () => {
+		for (const kind of ["teach", "scope", "class"] as ChatKind[]) {
 			for (const updatedAt of [new Date().toISOString(), "2025-06-02T12:00:00.000Z"]) {
 				const html = render(item({ kind, pendingQuestion: true, updatedAt }));
 				assert.ok(html.includes(`Waiting for input · ${timeAgo(updatedAt)}`));
@@ -137,27 +133,116 @@ describe("timeAgo", () => {
 	});
 });
 
-describe("SessionRow practice badge (practice sessions, 2026-10-04)", () => {
-	it("a practice row carries the dumbbell badge and the unified Working meta while busy (owner, 2026-10-10)", () => {
-		const html = render(item({ kind: "practice", busy: true }));
-		assert.match(html, /Working…/);
-		assert.doesNotMatch(html, /Practicing…/);
-		assert.match(html, /aria-label="Practice session"/);
+describe("SessionRow kind badge", () => {
+	it("a class row carries the graduation cap", () => {
+		const html = render(item({ kind: "class" }));
+		assert.match(html, /aria-label="Class session"/);
 	});
 
-	it("a teaching row carries neither", () => {
-		const html = render(item({}));
-		assert.doesNotMatch(html, /Practice session/);
-		assert.doesNotMatch(html, /Practicing…/);
+	it("a scope-interview row carries no badge", () => {
+		const html = render(item({ kind: "scope" }));
+		assert.doesNotMatch(html, /aria-label="Class session"/);
 	});
 
-	it("busy teaching rows say the same unified Working", () => {
-		const html = render(item({ busy: true }));
-		assert.match(html, /Working…/);
+	it("the meta override (search results: scope name prefix) replaces the derived meta", () => {
+		const html = renderToStaticMarkup(
+			<SessionRow chat={item({})} active={false} onOpen={() => {}} meta="German B1 · 2h ago" />,
+		);
+		assert.ok(html.includes("German B1 · 2h ago"));
+		assert.ok(!html.includes("Waiting for input"));
+	});
+});
+
+describe("scopeGroups (the sidebar's grouping, 2026-02)", () => {
+	const scope = (id: string): ScopeSummary => ({
+		id,
+		name: id,
+		updatedAt: "2026-01-01T00:00:00.000Z",
+		objectiveCount: 1,
+		topicCount: 2,
+		leafCount: 2,
+	});
+	const chat = (id: string, kind: ChatKind, scopeId: string | undefined, updatedAt: string): ChatListItem => ({
+		id,
+		title: id,
+		kind,
+		scopeId,
+		createdAt: updatedAt,
+		updatedAt,
+		messageCount: 1,
+		pendingQuestion: false,
+		busy: false,
+		compacting: false,
 	});
 
-	it("a practice row with a posed problem says the problem is waiting", () => {
-		const html = render(item({ kind: "practice", pendingProblem: true }));
-		assert.match(html, /Problem waiting ·/);
+	it("groups by scope: interviews first, classes below, newest first within kind", () => {
+		const groups = scopeGroups(
+			[scope("s1")],
+			[
+				chat("c1", "class", "s1", "2026-01-03T00:00:00.000Z"),
+				chat("c2", "scope", "s1", "2026-01-01T00:00:00.000Z"),
+				chat("c3", "class", "s1", "2026-01-05T00:00:00.000Z"),
+				chat("c4", "scope", "s1", "2026-01-02T00:00:00.000Z"),
+			],
+		);
+		assert.deepEqual(
+			groups.map((g) => g.chats.map((c) => c.id)),
+			[["c4", "c2", "c3", "c1"]],
+		);
+	});
+
+	it("chats without a scope or with an unknown scope stay hidden", () => {
+		const groups = scopeGroups(
+			[scope("s1")],
+			[
+				chat("orphan", "teach", undefined, "2026-01-01T00:00:00.000Z"),
+				chat("ghost", "class", "sX", "2026-01-01T00:00:00.000Z"),
+			],
+		);
+		assert.equal(groups.length, 1);
+		assert.deepEqual(groups[0]!.chats, []);
+	});
+
+	it("scopes with no chats still get their row (the empty dropdown)", () => {
+		const groups = scopeGroups([scope("s1"), scope("s2")], []);
+		assert.deepEqual(groups.map((g) => g.scope.id), ["s1", "s2"]);
+		assert.ok(groups.every((g) => g.chats.length === 0));
+	});
+});
+
+describe("ScopeRow", () => {
+	const s: ScopeSummary = {
+		id: "s1",
+		name: "German B1",
+		updatedAt: "2026-01-01T00:00:00.000Z",
+		objectiveCount: 1,
+		topicCount: 3,
+		leafCount: 2,
+	};
+	function renderScope(opts: Partial<Parameters<typeof ScopeRow>[0]> = {}) {
+		const props = { scope: s, expanded: false, hasChats: true, busy: false, onToggle: () => {}, onOpenView: () => {}, ...opts };
+		return renderToStaticMarkup(<ScopeRow {...props} />);
+	}
+
+	it("collapsed carries aria-expanded=false + the leaves meta", () => {
+		const html = renderScope({ hasChats: true, expanded: false });
+		assert.ok(html.includes('aria-expanded="false"'));
+		assert.ok(html.includes("2 leaves"));
+	});
+
+	it("expanded carries aria-expanded=true", () => {
+		const html = renderScope({ hasChats: true, expanded: true });
+		assert.ok(html.includes('aria-expanded="true"'));
+	});
+
+	it("a scope with no chats is a leaf row — no aria-expanded, opens the view", () => {
+		const html = renderScope({ hasChats: false });
+		assert.ok(!html.includes("aria-expanded"));
+		assert.ok(html.includes("open German B1 in the Scopes view"));
+	});
+
+	it("a busy group shows the spinner on the scope row", () => {
+		const html = renderScope({ hasChats: true, busy: true });
+		assert.ok(html.includes('data-testid="braille-spinner"'));
 	});
 });

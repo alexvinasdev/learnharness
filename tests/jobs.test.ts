@@ -44,8 +44,7 @@ import {
 	type VisualResult,
 	buildProbeHandoffSteer,
 } from "../src/core/contracts.ts";
-import { composeInstructions, createTeacherAgent } from "../src/agent/teacher-agent.ts";
-import { createTeacherTools } from "../src/agent/tools.ts";
+import { composeInstructions } from "../src/agent/teacher-agent.ts";
 import { webTools } from "../src/agent/tools/web.ts";
 import { handleChatRequest } from "../src/server/chat-handler.ts";
 import { runningTurn } from "../src/server/turn-runs.ts";
@@ -496,65 +495,8 @@ function researchCallingTeacher(): PiEngine {
 	]);
 }
 
-describe("dispatch (async protocol §2)", () => {
-	it("the research call resolves immediately with an ack; the turn continues and the runner steers", async () => {
-		const chat = chatStore.createChat("Test: research dispatch");
-		trackChat(chat.id);
-		// BYOK turn gate (owner, 2026-09-22): the scripted chat needs a
-		// conversation model — the per-chat pin, exactly like the setup flow.
-		chatStore.saveSettings(chat.id, { model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" } });
-
-		const delivery = fakeDeliver();
-		const search = stubSearch();
-		const testRunner = createJobRunner({ chatStore, jobStore, deliver: delivery.deliver, searchProvider: () => search });
-		const engine = researchCallingTeacher();
-		const tools = createTeacherTools({
-			chatId: chat.id,
-			chatStore,
-			jobStore,
-			spawn: (job, input) => void testRunner.runJob(job.id, input),
-		});
-		// The handler hands the factory the native build options — the
-		// record IS the agent state (Wave B: no adapter conversion).
-		const agent: Parameters<typeof handleChatRequest>[1] = (opts) =>
-			createTeacherAgent(undefined, { engine, tools, messages: opts.messages });
-
-		researchModelOverride.current = researcherModel();
-		const body = await drainTurn(post(chat.id, { type: "text", text: "teach me graph rendering" }), agent);
-
-		// The teacher's SAME turn carried on past the tool call.
-		assert.ok(body.includes("Back with the brief."), "the turn continued after the dispatch");
-
-		const saved = projectNative(chatStore.getChat(chat.id)!.messages);
-		const part = saved[1]!.parts.find((p) => p.type === "tool-research");
-		assert.ok(part && part.type === "tool-research", "research tool part persisted");
-		assert.equal(part.state, "output-available", "the part resolved at dispatch time (not held pending)");
-		assert.equal(typeof (part as { output?: unknown }).output, "string", "the output is the ack, not the result");
-		assert.match(String((part as { output?: unknown }).output), /fire-and-forget/);
-
-		// The job record exists and the background runner completed it.
-		const job = jobStore.findJobByToolCallId(chat.id, "call-r1");
-		assert.ok(job, "dispatch created a job record");
-		trackJob(job!.id);
-		await waitFor(() => jobStore.getJob(job!.id)!.status !== "running", 8000, "research job completion");
-
-		const done = jobStore.getJob(job!.id)!;
-		assert.equal(done.status, "done");
-		assert.equal(done.activity, "finished");
-
-		// The steer carries the brief on its model-facing content; the
-		// artifact payload rides details for the (UI) renderer.
-		assert.equal(delivery.steers.length, 1, "exactly one steer — one job, one result");
-		const steer = delivery.steers[0]!;
-		assert.equal((steer.details as { jobId: string }).jobId, job!.id);
-		assert.ok(steer.content.includes("sigma.js v3 is current"), "steer text carries the brief");
-
-		// Search threading (2026-09-20): the researcher's web_search ran on
-		// the INJECTED port — the stub saw the scripted query, no network.
-		assert.deepEqual(search.queries, ["sigma.js latest version (5)"]);
-		researchModelOverride.current = undefined;
-	});
-});
+// The chat-turn dispatch integration (teacher tools + handleChatRequest)
+// died with teaching sessions (2026-02) — the runner units below stay.
 
 // ─── the researcher loop with a fake model + stubbed fetch ──────────────────
 
@@ -1420,101 +1362,16 @@ describe("persistTurn (native history, Wave B)", () => {
 // ─── prompt composition hygiene (the README leak) ─────────────────────────────
 
 describe("prompt composition", () => {
-	it("loads ONLY numeric-prefix fragments — README.md never enters the system prompt", () => {
-		const instructions = composeInstructions("teacher");
+	it("loads ONLY numeric-prefix fragments — README.md never enters the scoper's system prompt", () => {
+		const instructions = composeInstructions("scoper");
 		assert.ok(!instructions.includes("Prompt fragments"), "README content must not leak");
 		assert.ok(!instructions.includes("Rules for adding a fragment"), "README content must not leak (rules)");
-		// every numeric fragment DOES compose, verbatim, after the base prompt
-		const base = fs.readFileSync("src/agent/system-prompt.md", "utf-8").trim();
-		assert.ok(instructions.startsWith(base), "base prompt first");
-		for (const f of fs.readdirSync("src/agent/prompts").filter((f) => /^\d+-[\w.-]+\.md$/.test(f)).sort()) {
-			const body = fs.readFileSync(`src/agent/prompts/${f}`, "utf-8").trim();
+		// every numeric fragment in the scoper's own directory composes verbatim
+		const dir = "src/agent/prompts/scoper";
+		for (const f of fs.readdirSync(dir).filter((f) => /^\d+-[\w.-]+\.md$/.test(f)).sort()) {
+			const body = fs.readFileSync(`${dir}/${f}`, "utf8").trim();
 			assert.ok(instructions.includes(body), `fragment ${f} must compose verbatim`);
 		}
-	});
-
-	it("the question principles compose into the teacher prompt; the probe's quick-measurement revision landed", () => {
-		const teacher = composeInstructions("teacher");
-		// the T2a doctrine fragment (user-locked wording 2026-09-15): verbatim presence
-		for (const pin of [
-			"Answerable by reasoning from the session",
-			"Never just reciting your words back",
-			"Prefer problems that apply the knowledge",
-			"Catch confusion early, and make it nameable",
-		]) {
-			assert.ok(teacher.includes(pin), `teacher prompt lost the principle: ${pin}`);
-		}
-		// it loads in sorted fragment order: right after 20-teaching, before 30-jobs
-		assert.ok(
-			teacher.indexOf("Question principles") > teacher.indexOf("# Teach — one step at a time"),
-			"principles sit after the teaching loop",
-		);
-		// the prober's doctrine: the "no rush" framing is gone, quick measurement in
-		const prober = composeInstructions("prober");
-		assert.ok(!prober.includes("There is no rush"), "the old no-rush framing is retired");
-		assert.ok(
-			prober.includes("every wasted question is resolution the final map doesn't get"),
-			"the efficiency-is-resolution directive is in",
-		);
-		assert.ok(!prober.includes("Question principles"), "the teach-phase fragment never composes into the prober");
-	});
-
-	it("the predict-check cycle composes into the teacher; the craft chunk reaches BOTH agents (owner 2026-10-03)", () => {
-		const teacher = composeInstructions("teacher");
-		// the cycle doctrine (28-predictions.md) — teacher-only
-		assert.ok(teacher.includes("predict → teach → check"), "the cycle line is in");
-		assert.ok(teacher.includes('The prediction (`type: "predict"`)'), "the prediction role section is in");
-		assert.ok(teacher.includes("Skip the prediction"), "the skip rule is in");
-		assert.ok(teacher.includes('The check (`type: "check"`)'), "the check role section is in");
-		// the craft + thinking channels (shared/20-question-tools.md) — BOTH agents
-		const prober = composeInstructions("prober");
-		for (const [name, prompt] of [
-			["teacher", teacher],
-			["prober", prober],
-		] as const) {
-			assert.ok(prompt.includes("asymmetry"), `${name} carries the option craft (moved out of tool descriptions)`);
-			assert.ok(prompt.includes("TRANSCRIBED SPEECH"), `${name} reads dictated thinking leniently`);
-			assert.ok(prompt.includes("thinkingWhileReading"), `${name} knows the reading channel`);
-		}
-		// the cycle is teach-phase doctrine — it never composes into the prober
-		assert.ok(!prober.includes("predict → teach → check"), "the teaching cycle stays out of the prober");
-	});
-
-	it("the sources-v0 prompt lines compose: read/pdf doctrine in the teacher, the read line in the prober", () => {
-		const teacher = composeInstructions("teacher");
-		assert.ok(teacher.includes("Learner source files"), "the teacher carries the source-files section");
-		assert.ok(teacher.includes("brief with page citations"), "the pdf brief's citation duty is stated");
-		const prober = composeInstructions("prober");
-		assert.ok(prober.includes("the `read` tool can inspect it directly"), "the prober knows it can read learner files");
-	});
-
-	it("the sources-v1 shared fragment composes into BOTH agents (find/ls/grep doctrine)", () => {
-		for (const kind of ["teacher", "prober"] as const) {
-			const instructions = composeInstructions(kind);
-			assert.ok(instructions.includes("## Learner files"), `${kind} carries the shared learner-files fragment`);
-			assert.ok(instructions.includes("find it yourself with `find`"), `${kind} knows to locate files itself`);
-			assert.ok(instructions.includes("home directory"), `${kind} knows the home-anchored path rule`);
-		}
-		// the agent's OWN fragments compose before the shared appendix
-		// (the reorder's order rule, 2026-09-27: job and method lead)
-		const teacher = composeInstructions("teacher");
-		assert.ok(
-			teacher.indexOf("## Learner source files") < teacher.indexOf("## Learner files"),
-			"the teacher's own 40-jobs section precedes the shared learner-files fragment",
-		);
-	});
-
-	it("guards prompt size — no fragment can silently balloon (the README-leak class)", () => {
-		// The wave-1 leak: README.md (815 bytes / ~200 tokens) rode into every
-		// teacher turn until the numeric-prefix filter stopped it. This guard
-		// catches the sibling failure mode — an accidental dump pasted into a
-		// fragment. Thresholds: largest real fragment is 40-demos.md at ~3.2k
-		// chars; 8k is generous headroom. Composed total ≤ 60k chars.
-		for (const f of fs.readdirSync("src/agent/prompts").filter((f) => /^\d+-[\w.-]+\.md$/.test(f))) {
-			const body = fs.readFileSync(`src/agent/prompts/${f}`, "utf-8").trim();
-			assert.ok(body.length <= 8_000, `fragment ${f} is ${body.length} chars — over the 8k guard`);
-		}
-		assert.ok(composeInstructions("teacher").length <= 60_000, "composed system prompt over the 60k guard");
 	});
 });
 

@@ -18,7 +18,6 @@ import {
 	toToolResult,
 	type ToolExecuteContext,
 } from "../src/agent/tool-execute.ts";
-import { askUserQuestionTool } from "../src/agent/tools.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -111,28 +110,9 @@ describe("serverExecute: cooperative settle, mapping parity, question bypass", (
 		assert.equal((result.content[0] as { text?: string }).text, "partial results");
 	});
 
-	it("questionResult is instant, terminates, and carries no details", async () => {
-		const ac = new AbortController();
-		ac.abort(); // a pre-aborted run signal — the placeholder must not care
-		const result = await askUserQuestionTool.execute("c6", { question: "q" }, ac.signal);
-		assert.match((result.content[0] as { text?: string }).text!, /Question posed/);
-		assert.equal(result.details, null);
-		assert.equal(result.terminate, true, "owner Option A: question results end the batch natively");
-	});
-
-	it("authoring failures return an isError result with the retryable problem list", async () => {
-		const result = (await askUserQuestionTool.execute("c7", {
-			question: "q",
-			options: [
-				{ label: "A", value: "same" },
-			{ label: "B", value: "same" },
-			],
-		})) as { isError?: boolean; content: Array<{ text?: string }>; details?: { tool: string; problems: string[] } };
-		assert.equal(result.isError, true, "pi 1.0 convention: returned, not thrown");
-		assert.equal(result.details?.tool, "ask_user_question");
-		assert.match(result.content[0]!.text!, /Invalid tool input for tool "ask_user_question":/);
-		assert.match(result.details!.problems.map((p) => `- ${p}`).join("\n"), /- .*same value/s);
-	});
+	// The ask-tool result-shape tests (questionResult instant + authoring
+	// failures) died with the tool (2026-02) — questionResult's own shape
+	// stays pinned in tool-execute's unit surface elsewhere.
 
 	it("toToolResult parity: string verbatim, object as JSON, details rides the raw value", () => {
 		const str = toToolResult("plain");

@@ -418,6 +418,12 @@ export function getGraph(graphStore: Pick<GraphStore, "readNodes" | "readChains"
 		for (const pt of line.provenance) {
 			if (!existing.provenance.some((q) => samePoint(q, pt))) existing.provenance.push(pt);
 		}
+		// Fork 2026-01-26: topic links union like aliases — a link line
+		// (link_proposition) carries only the id + one topicId, and readers
+		// merge it in. Metadata only; the graph stays propositions-only.
+		for (const tid of line.topicIds ?? []) {
+			if (!existing.topicIds?.includes(tid)) existing.topicIds = [...(existing.topicIds ?? []), tid];
+		}
 	}
 
 	// Merge chain assertion lines by (premises, conclusion): the first

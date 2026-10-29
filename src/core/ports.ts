@@ -19,12 +19,16 @@ import type {
 	JobKind,
 	JobRecord,
 	ExtractionRunUsage,
-	PlanTree,
 	Position,
 	CoverageEntry,
 	SessionCheckpoint,
 	TurnUsage,
 	NotesSource,
+	Scope,
+	ScopeSummary,
+	Exercise,
+	ExerciseBatch,
+	Attempt,
 } from "./contracts.ts";
 import type { UserSettings } from "./settings.ts";
 
@@ -32,9 +36,13 @@ import type { UserSettings } from "./settings.ts";
 
 export interface ChatStore {
 	/** Create a session record (persisted immediately). */
-	/** Create a session record; kind "practice" marks a practice session
-	 *  (absent = teach, the default). */
-	createChat(title: string, kind?: "practice"): ChatRecord;
+	/** Create a session record; kind "practice" marks a practice session,
+	 *  "scope" a scope-session (interviewing the learner's scope into
+	 *  being — fork 2026-01-26), "class" a Class (ADR 0003 — walking the
+	 *  scope's leaves). Absent = teach, the default. A scope
+	 *  session may open against an EXISTING scope (scopeId); a class
+	 *  REQUIRES one and may anchor to a subtree (classRootId). */
+	createChat(title: string, kind?: "practice" | "scope" | "class", scopeId?: string, classRootId?: string): ChatRecord;
 	/** The full record, or null if unknown id / corrupt file. */
 	getChat(id: string): ChatRecord | null;
 	/** All sessions, newest activity first (the sidebar's list view). */
@@ -42,8 +50,6 @@ export interface ChatStore {
 	/** Persist the full native message list (the record IS the agent
 	 * state — Wave B, owner-approved 2026-09-26). */
 	saveMessages(id: string, messages: LhMessage[]): void;
-	/** Persist the session plan tree (plan tools call this in execute). */
-	saveTree(id: string, tree: PlanTree): void;
 	/** Append one usage entry to the record's turn log (the money channel,
 	 * 2026-09): idempotent per turn id — each request carries its own, so
 	 * a turn persisted twice appends once while continuation turns (which
@@ -58,6 +64,10 @@ export interface ChatStore {
 	 * Like saveSettings: a rename is NOT conversation activity — updatedAt
 	 * stays put, so sidebar order never churns on a rename. */
 	renameChat(id: string, title: string): ChatRecord;
+	/** Attach a scope to a scope-kind session (the scoper's scope_create,
+	 * fork 2026-01-26): one-way — a session works on exactly one scope.
+	 * Throws when the session already holds a DIFFERENT scope. */
+	attachScope(id: string, scopeId: string): void;
 	/** Delete the session record entirely (session-deletion wave 6, owner
 	 *  2026-09-22). False when the id is unknown. The graph-ledger purge and
 	 *  job cleanup are the caller's choreography (core/graph-deletion.ts +
@@ -158,6 +168,51 @@ export interface JobStore {
 	 *  route refuses while jobs are still running, so by the time this
 	 *  fires every record is terminal. */
 	deleteJobsForChat(chatId: string): number;
+}
+
+// ─── ScopeStore — the scope family (data/scopes/<id>/) ───────────────────────
+
+/** The fork's scope artifact and its satellites (2026-01-26): scope.json
+ *  (read-modify-write like a chat record), exercises.json (read-modify-
+ *  write), grind.jsonl (APPEND-ONLY — the attempt log is never rewritten,
+ *  the store-events-derive-state doctrine), and cheatsheets/<topicId>.md
+ *  (one regenerable file per leaf). List-shape mutations (create/delete/
+ *  save) announce on the event bus; exercise, attempt, and cheatsheet
+ *  writes are SILENT — their views refetch from their own action responses
+ *  (the chats' SILENCE LAW, same reasoning). */
+export interface ScopeStore {
+	/** Create an empty scope (persisted immediately). Objectives and the
+	 *  tree arrive via saveScope — the scoper interview builds them. */
+	createScope(name: string): Scope;
+	/** The full scope, or null when unknown id / corrupt file / newer
+	 *  schema version (honest refusal). */
+	getScope(id: string): Scope | null;
+	/** List summaries, most recently updated first. */
+	listScopes(): ScopeSummary[];
+	/** Replace-whole persist (callers read-modify-write; bumps updatedAt
+	 *  and stamps the version). */
+	saveScope(scope: Scope): void;
+	/** Delete the scope's whole directory. False when unknown id. The
+	 *  chats' dangling scopeId references are the orphan doctrine — they
+	 *  stay, flagged, never cascade. */
+	deleteScope(id: string): boolean;
+
+	/** Land a generated batch: exercises + its record, one write. */
+	appendBatch(scopeId: string, batch: ExerciseBatch, exercises: Exercise[]): void;
+	/** The exercises file, or null when the scope has none yet. */
+	getExercises(scopeId: string): { exercises: Exercise[]; batches: ExerciseBatch[] } | null;
+	/** Bury/unbury a POOLED exercise — exclusion with history intact. */
+	setBuried(scopeId: string, exerciseId: string, buried: boolean): boolean;
+
+	/** Append one attempt line (never rewritten). */
+	appendAttempt(scopeId: string, attempt: Attempt): void;
+	/** Every attempt, append order. */
+	readAttempts(scopeId: string): Attempt[];
+
+	/** The leaf's cheatsheet markdown, or null when never generated. */
+	readCheatsheet(scopeId: string, topicId: string): string | null;
+	/** Persist a cheatsheet (generation job + regen overwrite here). */
+	writeCheatsheet(scopeId: string, topicId: string, markdown: string): void;
 }
 
 // ─── SettingsStore — THE user settings record (settings-storage wave, 2026-09-19) ──

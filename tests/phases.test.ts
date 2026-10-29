@@ -43,59 +43,48 @@ function assistantQuiz(input: Record<string, unknown> | undefined): LhViewMessag
 }
 
 const DONE_ASSESSMENT = { assessment: { strands: [{ strand: "s", assessment: "a" }] } };
-const PLAN_OK = { ok: true, tree: { nodes: [{ id: "n1", title: "N" }], edges: [] } };
 
-test("phaseAt3: probe until a concluded probe_done; plan until the first nodeId-tagged quiz; teach after", () => {
-	const probe = phaseAt3([user("teach me calculus"), assistantQuiz({ question: "q", correctAnswer: "a" })]);
-	assert.equal(probe, "probe", "an UNTAGGED quiz alone never ends the probe (probe quizzes carry no nodeId)");
+test("phaseAt3: probe until a concluded probe_done or the first TEACH-quiz call; teach after (fork 2026-01-26)", () => {
+	const probeQuiz = phaseAt3([user("teach me calculus"), assistantTool("probe", "output-available")]);
+	assert.equal(probeQuiz, "probe", "a PROBE quiz (tool-probe) never ends the probe");
 
 	const concluded = phaseAt3([
 		user("teach me"),
 		assistantTool("probe_done", "output-available", DONE_ASSESSMENT),
 	]);
-	assert.equal(concluded, "plan", "a concluded probe_done ends the probe (planning begins)");
-
-	const presented = phaseAt3([
-		user("teach me"),
-		assistantTool("probe_done", "output-available", DONE_ASSESSMENT),
-		assistantTool("plan_init", "output-available", PLAN_OK),
-		user("looks good, go"),
-	]);
-	assert.equal(presented, "plan", "plan_init + the learner's go-ahead TEXT present and sanction nothing");
+	assert.equal(concluded, "teach", "a concluded probe_done ends the probe (teaching begins)");
 
 	const teaching = phaseAt3([
 		user("teach me"),
 		assistantTool("probe_done", "output-available", DONE_ASSESSMENT),
-		assistantTool("plan_init", "output-available", PLAN_OK),
-		user("looks good, go"),
-		assistantQuiz({ question: "q", nodeId: "gravity-basics", correctAnswer: "a" }),
+		assistantQuiz({ question: "q", correctAnswer: "a" }),
 	]);
-	assert.equal(teaching, "teach", "the first nodeId-tagged quiz CALL is where teaching begins");
+	assert.equal(teaching, "teach", "any teach-quiz CALL (tagged or not) is teaching");
 
-	const failedPlan = phaseAt3([
+	const quizAlone = phaseAt3([
 		user("teach me"),
-		assistantTool("probe_done", "output-available", DONE_ASSESSMENT),
-		assistantTool("plan_init", "output-error", { ok: false, error: "bad mermaid" }),
-		assistantQuiz({ question: "q", nodeId: "n1", correctAnswer: "a" }),
+		assistantQuiz({ question: "q", correctAnswer: "a" }),
 	]);
-	assert.equal(failedPlan, "teach", "a tagged quiz begins teaching even after a failed init attempt");
+	assert.equal(quizAlone, "teach", "a teach-quiz call alone begins teaching (free sessions never probe)");
 });
 
 test("phaseAt3: the tag is the seam — natural text and untagged questions never start teaching", () => {
 	const plainText = phaseAt3([
 		user("teach me"),
 		assistantTool("probe_done", "output-available", DONE_ASSESSMENT),
-		assistantTool("plan_init", "output-available", PLAN_OK),
-		user("The plan is accepted — begin teaching."), // words alone
-		assistantQuiz({ question: "ad-hoc check", correctAnswer: "a" }), // untagged
+		user("Begin teaching, please."), // words alone
 	]);
-	assert.equal(plainText, "plan", "only a nodeId-tagged quiz flips the seam — text and ad-hoc checks never do");
+	assert.equal(plainText, "teach", "the probe_done seam fired — words change nothing either way");
 
-	const taggedOutOfOrder = phaseAt3([
+	const wordsAlone = phaseAt3([user("teach me"), user("begin!")]);
+	assert.equal(wordsAlone, "probe", "no seam event, no advance — words never flip a phase");
+
+	const probeOnly = phaseAt3([
 		user("teach me"),
-		assistantQuiz({ question: "q", nodeId: "n1", correctAnswer: "a" }), // before probe_done
+		assistantTool("probe", "output-available"),
+		assistantTool("recall", "output-available"),
 	]);
-	assert.equal(taggedOutOfOrder, "probe", "the chain never skips");
+	assert.equal(probeOnly, "probe", "the prober's own tools never start teaching");
 });
 
 test("phaseAt3: a mere probe_done CALL (input-available, not yet concluded) keeps the probe open", () => {
@@ -104,23 +93,22 @@ test("phaseAt3: a mere probe_done CALL (input-available, not yet concluded) keep
 });
 
 test("phaseAt3: legacy transcripts without probe_done read as probe (no backwards compat — data wiped)", () => {
-	const legacy = phaseAt3([user("teach me lacan"), assistantTool("plan_init", "output-available", PLAN_OK)]);
-	assert.equal(legacy, "probe", "plan_init alone never flips a phase post-split");
+	const legacy = phaseAt3([user("teach me lacan"), assistantTool("plan_init", "output-available", { ok: true })]);
+	assert.equal(legacy, "probe", "a plan_init call (legacy transcripts) flips nothing — the plan is gone");
 });
 
 test("phaseTimeline: folds messages into phase spans for the dividers", () => {
 	const timeline = phaseTimeline([
 		user("teach me"),
-		assistantTool("quiz", "output-available"),
+		assistantTool("probe", "output-available"),
 		assistantTool("probe_done", "output-available", DONE_ASSESSMENT),
-		assistantTool("plan_init", "output-available", PLAN_OK),
-		user("what does node 1 mean?"), // side question — still planning
+		user("what does this mean?"), // side question — teaching has begun
 		user("go on"),
-		assistantQuiz({ question: "q", nodeId: "n1", correctAnswer: "a" }),
-		assistantQuiz({ question: "q2", nodeId: "n2", correctAnswer: "a" }),
+		assistantQuiz({ question: "q", correctAnswer: "a" }),
+		assistantQuiz({ question: "q2", correctAnswer: "a" }),
 	]);
-	assert.deepEqual(timeline satisfies Phase3[], ["probe", "probe", "plan", "plan", "plan", "plan", "teach", "teach"]);
-	assert.equal(timeline.length, 8);
+	assert.deepEqual(timeline satisfies Phase3[], ["probe", "probe", "teach", "teach", "teach", "teach", "teach"]);
+	assert.equal(timeline.length, 7);
 });
 
 test("phaseAt3: empty transcript is probe", () => {
@@ -158,26 +146,24 @@ function assistantQuizCall(arguments_: Record<string, unknown>): LhMessage {
 	} as unknown as LhMessage;
 }
 
-test("phaseAt3Lh (native fold): probe→plan at the clean probe_done result; plan→teach at the first tagged quiz CALL", () => {
+test("phaseAt3Lh (native fold): probe→teach at the clean probe_done result OR the first quiz CALL", () => {
 	const done = toolResult("probe_done");
-	const tagged = assistantQuizCall({ question: "q", nodeId: "gravity-basics", correctAnswer: "a" });
-	const untagged = assistantQuizCall({ question: "q", correctAnswer: "a" });
+	const quiz = assistantQuizCall({ question: "q", correctAnswer: "a" });
 
-	assert.equal(phaseAt3Lh([done, untagged]), "plan", "an untagged quiz call never starts teaching");
-	assert.equal(phaseAt3Lh([done, tagged]), "teach", "the tagged quiz CALL is the seam");
-	assert.equal(phaseAt3Lh([tagged]), "probe", "the chain never skips (tag before probe_done)");
+	assert.equal(phaseAt3Lh([done, quiz]), "teach", "the quiz CALL follows the seam");
+	assert.equal(phaseAt3Lh([quiz]), "teach", "a quiz CALL alone begins teaching (free sessions)");
 	assert.equal(
-		phaseAt3Lh([toolResult("probe_done", true), tagged]),
-		"probe",
-		"an ERRORED probe_done concludes nothing",
+		phaseAt3Lh([toolResult("probe_done", true), quiz]),
+		"teach",
+		"an ERRORED probe_done concludes nothing — but the quiz still teaches",
 	);
 	// The two folds agree on the same settled transcript (the view projection
-	// of the tagged call carries its arguments as the part input).
+	// of the call carries its arguments as the part input).
 	assert.equal(
-		phaseAt3Lh([done, tagged]),
+		phaseAt3Lh([done, quiz]),
 		phaseAt3([
 			{ parts: [{ type: "tool-probe_done", state: "output-available" } as never] },
-			{ parts: [{ type: "tool-quiz", input: { nodeId: "gravity-basics" } } as never] },
+			{ parts: [{ type: "tool-quiz", input: { question: "q" } } as never] },
 		]),
 	);
 });
@@ -186,7 +172,7 @@ test("phaseAt3Lh (native fold): probe→plan at the clean probe_done result; pla
 // Both quizzing tools (quiz OR explain, whichever the settings armed) open
 // teaching — the seam is structural, not name-bound to the MC tool.
 
-test("phaseAt3 + phaseAt3Lh: a tagged explain CALL is the plan→teach seam too", () => {
+test("phaseAt3 + phaseAt3Lh: an explain CALL opens teaching too (tagged or not)", () => {
 	const done = toolResult("probe_done");
 	const explainCall = (args: Record<string, unknown>): LhMessage =>
 		({
@@ -196,16 +182,14 @@ test("phaseAt3 + phaseAt3Lh: a tagged explain CALL is the plan→teach seam too"
 			timestamp: Date.now(),
 		}) as unknown as LhMessage;
 
-	const tagged = explainCall({ question: "q", correctAnswer: "a", explanation: "e", nodeId: "gravity-basics" });
 	const untagged = explainCall({ question: "q", correctAnswer: "a", explanation: "e" });
 
-	assert.equal(phaseAt3Lh([done, untagged]), "plan", "an untagged explain never starts teaching");
-	assert.equal(phaseAt3Lh([done, tagged]), "teach", "the tagged explain CALL is the seam");
+	assert.equal(phaseAt3Lh([done, untagged]), "teach", "any explain CALL is the seam (free sessions explain untagged)");
 	assert.equal(
-		phaseAt3Lh([done, tagged]),
+		phaseAt3Lh([done, untagged]),
 		phaseAt3([
 			{ parts: [{ type: "tool-probe_done", state: "output-available" } as never] },
-			{ parts: [{ type: "tool-explain", input: { nodeId: "gravity-basics" } } as never] },
+			{ parts: [{ type: "tool-explain", input: { question: "q" } } as never] },
 		]),
 		"the two folds agree on the explain mechanic",
 	);

@@ -25,7 +25,7 @@ import { absorbed, pendingCallTool, SessionModel } from "../components/session-c
 import type { ChatInput } from "../src/core/input-events.ts";
 import type { LhMessage } from "../src/core/native-messages.ts";
 import { newUserMessage, newAnswerResult, newThinkingMessage, needsContinuation, endsInDismissal } from "../src/core/native-messages.ts";
-import { newCompactionMarker, newPlanBlockMessage, projectView } from "../src/core/index.ts";
+import { newCompactionMarker, projectView } from "../src/core/index.ts";
 import { dismissedAnswer } from "../src/core/question-core.ts";
 import { buildAnswer, type QuestionData } from "../src/core/question-core.ts";
 
@@ -520,7 +520,7 @@ describe("provider-error banner (live and saved)", () => {
 			{ ...assistantMsg("aborted", ""), stopReason: "aborted", errorMessage: "Aborted" } as LhMessage,
 			newThinkingMessage("problem", "my attempt"),
 			resultMsg("call"),
-			newPlanBlockMessage("plan", { kind: "full", nodes: [], edges: [], current: null }),
+			{ id: "mk_plan", role: "custom", customType: "problem-dismissed", content: "", display: false, details: {}, timestamp: 1 } as never,
 			newCompactionMarker("summary", { firstKeptMessageId: failure.id, tokensBefore: 100, model: "fixture", at: "2026-01-01T00:00:00Z" }),
 		];
 		for (const entry of later) {

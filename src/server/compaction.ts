@@ -37,7 +37,6 @@ import {
 	estimateContextTokens,
 	estimateTokens,
 	newCompactionMarker,
-	planTreeToText,
 	serializeForSummary,
 	toLlmMessages,
 	type CompactionDetails,
@@ -158,6 +157,8 @@ export function effectiveThresholdTokens(settingTokens: number | undefined, cont
 export function projectedContextTokens(messages: readonly LhMessage[], systemPromptTokens: number): number {
 	const est = estimateContextTokens(messages);
 	if (est.lastUsageIndex !== null) return est.tokens;
+	// SAFETY: the estimator takes native record messages; the agent-flattened
+	// form carries the same parts, so the double-cast is a shape reconciliation.
 	return estimateTokens(toLlmMessages(messages as readonly AgentMessage[]) as unknown as readonly LhMessage[]) + systemPromptTokens;
 }
 
@@ -206,7 +207,6 @@ async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
 
 	const prompt = buildCompactionPrompt({
 		spanText: fullSpan,
-		planTreeText: planTreeToText(record.tree, messages),
 		kind: deps.kind,
 	});
 

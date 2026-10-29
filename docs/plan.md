@@ -1,3 +1,9 @@
+> [!IMPORTANT]
+> ARCHIVED (fork 2026-01-26, ADR `docs/adr/0001-scope-replaces-plan-tree.md`): the plan
+> tree this document designs is REMOVED from the fork — sessions walk a persistent Scope
+> (or teach free with no map). This document stays as the historical Build Plan v1 record
+> of how the plan machinery was built; nothing here describes the fork's current behavior.
+
 # Build Plan v1 — from vision to system
 
 Execution plan for `docs/vision.md`. Section references (§) point into that document. Not exact — a dependency-ordered wave structure with verification gates. Written 2026-08-22.

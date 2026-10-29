@@ -43,15 +43,9 @@ describe("composer action row", () => {
 			assert.equal(document.querySelector('[data-testid="practice-props-clear"]'), null);
 		});
 
-		it(`${label}: the practice draft uses that same row and order`, () => {
-			const document = documentFor(<DraftShell busy={false} text="" onChange={() => {}} onSend={() => {}} mode="practice" setupCta={setup} />);
-			const rows = document.querySelectorAll('[data-testid="composer-actions"]');
-			assert.equal(rows.length, 1);
-			assert.ok(rows[0]!.classList.contains("justify-start"));
-			assert.ok(rows[0]!.firstElementChild!.querySelector('[data-testid="practice-props-chip"]'));
-			assert.equal(rows[0]!.lastElementChild!.tagName, "BUTTON");
-		});
-	}
+	// The practice-draft row test and the pick-bar preservation test died
+	// with their modes (2026-02) — the draft is scope-only now.
+}
 
 	it("picker-only remains left-aligned", () => {
 		const document = documentFor(<ComposerActions picker={<NodePickerControl count={0} />} />);
@@ -78,9 +72,5 @@ describe("composer action row", () => {
 		assert.ok(wrapper.classList.contains("mb-2"));
 	});
 
-	it("the practice shell preserves a selected node in teaching mode", () => {
-		const document = documentFor(<DraftShell busy={false} text="" onChange={() => {}} onSend={() => {}} mode="teach" picks={[{id:"n_1",name:"Parity",statement:"Odd + odd = even."}]} />);
-		assert.equal(document.querySelector('[data-testid="practice-props-chip"]')!.textContent, "1 node selected");
-		assert.ok(document.querySelector('[data-testid="practice-props-clear"]'));
-	});
+	// (the pick-bar preservation it died with picks — 2026-02)
 });

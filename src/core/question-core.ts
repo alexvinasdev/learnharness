@@ -60,11 +60,13 @@ const askOptionProps = {
  *  normalizeOptions (client — the persisted call keeps the raw string, so
  *  the dock must coerce again). Returns the input untouched when it isn't
  *  a parseable array — validation then reports honestly. */
-export function parseOptionsIfString<T>(options: string | T[] | undefined): unknown {
+export function parseOptionsIfString<T>(options: string | T[] | undefined): T[] | string | undefined {
 	if (typeof options !== "string") return options;
 	try {
 		const parsed: unknown = JSON.parse(options);
-		if (Array.isArray(parsed)) return parsed;
+		// SAFETY: Array.isArray narrows to unknown[]; the caller's T is the
+		// options shape the model was asked for — validation reports if it lies.
+		if (Array.isArray(parsed)) return parsed as T[];
 	} catch {
 		/* not JSON — fall through untouched */
 	}
@@ -248,22 +250,25 @@ const predictCheckType = Type.Union([Type.Literal("predict"), Type.Literal("chec
 });
 
 
-/** The TEACH-side quiz object. The required pair leads the property
+/** The TEACH-side quiz object. The position pair leads the property
  *  order (owner, 2026-10-09): glm-5.3 dropped `type`/`nodeId` on long
  *  calls BECAUSE they trailed every content field — fields generated
  *  first get dropped least. The order is also the authoring order:
- *  commit to the node and the question's role, then write the question. */
+ *  commit to the node and the question's role, then write the question.
+ *  Fork 2026-01-26: nodeId is the SCOPE topic id when the session walks
+ *  a scope (validated against the scope tree), and absent on FREE
+ *  sessions (no map — the plan tree is gone, ADR 0001). */
 export const quizInputObject = Type.Object({
 	type: predictCheckType,
-	nodeId: Type.String({
-		description:
-			"REQUIRED plan-tree node id this question is about — must EXACTLY match one of this session's " +
-			"plan_init node slugs (validated at call time; a mismatched id is rejected back to you). " +
-			"The lesson's position on the map derives from these tags (the node the latest tagged question is about is " +
-			"where the map stands; earlier ones count as visited). A node takes as many questions as it deserves: stay on " +
-			"one node for as many turns as the understanding needs — one reasoning step at a time, never rush forward. " +
-			"For off-map checks use ask_user_question.",
-	}),
+	nodeId: Type.Optional(
+		Type.String({
+			description:
+				"When this session walks a scope (scope_read shows one): REQUIRED — the topic id this question is " +
+				"about, copied exactly from scope_read (validated at call time; a mismatched id is rejected back to you). " +
+				"Stay on one topic for as many turns as the understanding needs — one reasoning step at a time, never rush " +
+				"forward. On a FREE session (no scope): omit it entirely — free sessions carry no topic map.",
+		}),
+	),
 	...quizInputBase.properties,
 });
 
@@ -317,23 +322,20 @@ export const explainInputBase = Type.Object({
 	),
 });
 
-/** The TEACH-side explain object: base + the plan-position field (same
- *  semantics as the quiz's nodeId — the seam recognizes BOTH tools). */
 /** The TEACH-side explain object: base + the teaching-cycle role field
- *  and the plan-position field (same semantics as the quiz's — the seam
+ *  and the position field (same semantics as the quiz's — the seam
  *  recognizes BOTH tools). The required pair leads the property order,
- *  exactly as the teach quiz's (owner, 2026-10-09). */
+ *  exactly as the teach quiz's (owner, 2026-10-09). Fork 2026-01-26:
+ *  nodeId = scope topic id (scoped sessions), absent on free ones. */
 export const explainInputObject = Type.Object({
 	type: predictCheckType,
-	nodeId: Type.String({
-		description:
-			"REQUIRED plan-tree node id this question is about — must EXACTLY match one of this session's " +
-			"plan_init node slugs (validated at call time; a mismatched id is rejected back to you). " +
-			"The lesson's position on the map derives from these tags (the node the latest tagged question is about is " +
-			"where the map stands; earlier ones count as visited). A node takes as many questions as it deserves: stay on " +
-			"one node for as many turns as the understanding needs — one reasoning step at a time, never rush forward. " +
-			"For off-map checks use ask_user_question.",
-	}),
+	nodeId: Type.Optional(
+		Type.String({
+			description:
+				"When this session walks a scope (scope_read shows one): REQUIRED — the topic id this question is " +
+				"about, copied exactly from scope_read (validated at call time). On a FREE session (no scope): omit it.",
+		}),
+	),
 	...explainInputBase.properties,
 });
 

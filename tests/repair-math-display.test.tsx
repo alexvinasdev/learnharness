@@ -7,7 +7,6 @@ import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { parseHTML } from "linkedom";
 import { validateToolArguments } from "@earendil-works/pi-ai";
-import { problemInputObject } from "../src/agent/tools/practice.ts";
 import { PracticeDock } from "../components/practice-dock.tsx";
 import { QuestionDock } from "../components/question-dock.tsx";
 import { LatexGlyph } from "../components/latex-glyph.tsx";
@@ -150,38 +149,7 @@ describe("practice display surfaces", () => {
 		});
 	}
 
-	it("keeps a boundary-converted numeric statement raw and preserves prior dock passthrough", () => {
-		const raw = { statement: 17, mode: "recall", modelSolution: "Committed solution." };
-		const call = { type: "toolCall", id: "numeric_problem", name: "problem", arguments: raw };
-		const validated = validateToolArguments(
-			{ name: "problem", parameters: problemInputObject } as never,
-			call as never,
-		) as { statement: unknown };
-		assert.equal(validated.statement, "17", "the actual tool boundary converts its cloned arguments");
-		assert.equal(raw.statement, 17, "saved arguments retain the number");
-		const messages = [
-			{ id: "numeric_pose", role: "assistant", content: [call], timestamp: 1 },
-			{ id: "numeric_ack", role: "toolResult", toolCallId: call.id, toolName: "problem", content: [{ type: "text", text: "Problem posed" }], details: null, isError: false, timestamp: 2 },
-		] as unknown as LhMessage[];
-		const before = structuredClone(messages);
-		const active = activeProblemOf(messages);
-		assert.ok(active);
-		assert.equal((active.input as { statement: unknown }).statement, 17);
-		// Mirror the existing runtime cast at the Chat -> PracticeDock seam.
-		const input = active.input as { statement: string };
-		let expanded = "";
-		assert.doesNotThrow(() => { expanded = renderToStaticMarkup(dock(input)); });
-		const { document } = parseHTML(expanded);
-		assert.equal(document.querySelector(".lh-prose")!.innerHTML,
-			parseHTML(renderToStaticMarkup(<MessageResponse>{input.statement}</MessageResponse>)).document.firstElementChild!.outerHTML,
-			"non-string values pass through exactly as before, without string coercion or a new fallback");
-		const collapsed = renderToStaticMarkup(dock(input, false));
-		assert.match(collapsed, /data-testid="practice-dock-bar"/);
-		assert.equal(parseHTML(collapsed).document.querySelector("span.truncate")!.textContent, "17");
-		assert.deepEqual(math(collapsed).annotations, []);
-		assert.deepEqual(messages, before);
-		assert.equal(raw.statement, 17);
-	});
+	// The problem-tool boundary test died with the tool (2026-02).
 
 	it("preserves code spans/fences across every repaired display surface", () => {
 		const raw = "`" + doubled + "`\n\n```text\n" + doubled + "\n```";

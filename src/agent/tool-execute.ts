@@ -250,6 +250,24 @@ export function problemResult(): AgentToolResult<null> {
 	};
 }
 
+/** The class pose's ack (ADR 0003): the practice pose's contract exactly —
+ *  the result is FINAL (the interactive card renders from its details
+ *  payload), terminate: true ends the turn, and the graded outcome
+ *  arrives as the [EXERCISE RESULT] marker message (the attempt itself
+ *  is already logged in the grind log by the client). */
+export function poseExerciseResult(exerciseId: string): AgentToolResult<null> {
+	return {
+		content: [
+			{
+				type: "text",
+				text: `Exercise ${exerciseId} posed — the turn ends here; the graded outcome arrives as the next [EXERCISE RESULT] message (already logged in the grind log).`,
+			},
+		],
+		details: null,
+		terminate: true,
+	};
+}
+
 /** The conclude ack: NOT terminate — the turn continues so the same reply
  *  can reveal + pose the next problem. Text single-sourced in contracts
  *  (CONCLUDE_ACK_TEXT — shared with the dismissal-synthesized pair). */

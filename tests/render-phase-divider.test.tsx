@@ -12,14 +12,13 @@ import React from "react";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { PhaseChip, PhaseDivider, planNodeCount } from "../components/phase-divider.tsx";
+import { PhaseChip, PhaseDivider } from "../components/phase-divider.tsx";
 import { teachStepIndex } from "../src/core/phases.ts";
 
 describe("PhaseChip (header)", () => {
 	it("renders the learner-facing label — no colored dot (phase color retired)", () => {
 		for (const [phase, label] of [
 			["probe", "Probing"],
-			["plan", "Planning"],
 			["teach", "Teaching"],
 		] as const) {
 			const html = renderToStaticMarkup(<PhaseChip phase={phase} />);
@@ -32,7 +31,7 @@ describe("PhaseChip (header)", () => {
 	});
 
 	it("UN-PILLED (owner, extraction-UX redesign 2026-09-24): a flat tag — no border, no rounding, no padding", () => {
-		const html = renderToStaticMarkup(<PhaseChip phase="plan" />);
+		const html = renderToStaticMarkup(<PhaseChip phase="teach" />);
 		assert.ok(!html.includes("rounded-full"), "no pill curve");
 		assert.ok(!html.includes("border-border"), "no border chrome");
 		assert.ok(!html.includes("px-2"), "no pill padding");
@@ -47,15 +46,7 @@ describe("PhaseChip (header)", () => {
 });
 
 describe("PhaseDivider (transcript boundary)", () => {
-	it("the plan seam: monochrome dotted rules + node count", () => {
-		const html = renderToStaticMarkup(<PhaseDivider phase="plan" nodeCount={3} />);
-		assert.ok(html.includes('data-testid="phase-divider-plan"'));
-		assert.match(html, /Plan · 3 nodes/);
-		assert.ok(html.includes("border-dotted"), "dotted rule");
-		assert.ok(html.includes("border-border"), "monochrome rule");
-		assert.ok(!html.includes("border-phase-"), "phase-colored rules are retired");
-	});
-
+	
 	it("the teach seam: monochrome rule, no count", () => {
 		const html = renderToStaticMarkup(<PhaseDivider phase="teach" />);
 		assert.ok(html.includes('data-testid="phase-divider-teach"'));
@@ -65,16 +56,8 @@ describe("PhaseDivider (transcript boundary)", () => {
 		assert.ok(!html.includes("nodes"));
 	});
 
-	it("singular node count", () => {
-		const html = renderToStaticMarkup(<PhaseDivider phase="plan" nodeCount={1} />);
-		assert.match(html, /Plan · 1 node\b/);
-	});
-
-	it("a plan seam without a count still labels itself", () => {
-		const html = renderToStaticMarkup(<PhaseDivider phase="plan" />);
-		assert.match(html, /Planning/);
-	});
-
+	
+	
 	it("probe renders null (never a boundary — phases only advance)", () => {
 		assert.equal(renderToStaticMarkup(<PhaseDivider phase="probe" />), "");
 	});
@@ -106,14 +89,17 @@ describe("teachStepIndex (WHERE teaching begins inside the flipping message — 
 		assert.equal(teachStepIndex([{ type: "text" }, call]), -1);
 	});
 
-	it("an untagged quiz call is not the flip — scan continues to the tagged one", () => {
+	it("the FIRST quiz call governs the divider (tagged or not — free sessions quiz untagged)", () => {
 		const parts = [
 			{ type: "step-start" },
-			{ type: "tool-quiz", input: { question: "probe quiz — no nodeId" } },
+			{ type: "tool-quiz", input: { question: "any teach quiz governs" } },
 			{ type: "step-start" },
 			call,
 		];
-		assert.equal(teachStepIndex(parts), 2);
+		// The first quiz sits in the message's FIRST step (1 step-start seen) —
+		// the divider belongs before the whole message (-1); a later quiz
+		// never re-governs.
+		assert.equal(teachStepIndex(parts), -1);
 	});
 
 	it("explain calls carry nodeId too — same seam", () => {
@@ -127,36 +113,3 @@ describe("teachStepIndex (WHERE teaching begins inside the flipping message — 
 	});
 });
 
-describe("planNodeCount (the seam message's tree)", () => {
-	it("counts the first output-available plan tree in the message", () => {
-		const count = planNodeCount({
-			parts: [
-				{ type: "text", text: "Here's your plan." },
-				{
-					type: "tool-plan_init",
-					state: "output-available",
-					toolCallId: "p1",
-					output: { ok: true, tree: { nodes: [{ id: "a" }, { id: "b" }], edges: [], currentNodeId: null, doneNodeIds: [], version: 1 } },
-				},
-			],
-		});
-		assert.equal(count, 2);
-	});
-
-	it("skips streaming/failed parts (an empty or failed tree gives no count)", () => {
-		assert.equal(
-			planNodeCount({ parts: [{ type: "tool-plan_init", state: "input-streaming" }] }),
-			undefined,
-		);
-		assert.equal(
-			planNodeCount({
-				parts: [
-					{ type: "tool-plan_init", state: "output-available", toolCallId: "p1", output: { ok: false, tree: { nodes: [], edges: [], currentNodeId: null, doneNodeIds: [], version: 0 } } },
-				],
-			}),
-			undefined,
-			"an empty tree (failed init) carries no count",
-		);
-		assert.equal(planNodeCount({ parts: [{ type: "text" }] }), undefined);
-	});
-});

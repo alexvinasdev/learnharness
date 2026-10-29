@@ -14,17 +14,27 @@ export const dynamic = "force-dynamic";
  * The draft's model control binds the STRONG SLOT (the new-session
  * default); the session the first send creates is stamped from it
  * server-side (per-session models, owner 2026-09-28).
+ *
+ * The scope-or-class law (2026-02 + ADR 0003): a plain draft is a Scope
+ * Session — the scoper agent interviews the learner into a persistent
+ * Scope. ?scope=<id> opens the draft against an EXISTING scope
+ * (refinement interviews). ?mode=class&scope=<id>[&topic=<id>] makes the
+ * draft a CLASS — the agent that walks the scope (or the subtree
+ * anchored by topic) teaching from cheatsheets and exercising from the
+ * pool.
  */
 export default async function NewSessionPage({
 	searchParams,
 }: {
-	searchParams: Promise<{ mode?: string }>;
+	searchParams: Promise<{ scope?: string; topic?: string; mode?: string }>;
 }) {
-	const { mode } = await searchParams;
+	const { scope, topic, mode } = await searchParams;
+	const classTarget = mode === "class" && scope ? { scopeId: scope, topicId: topic } : undefined;
 	return (
 		<NewSession
 			initialConfigured={slotsConfigured(readSettingsRecord()?.models)}
-			mode={mode === "practice" ? "practice" : "teach"}
+			{...(scope && !classTarget ? { scopeId: scope } : {})}
+			{...(classTarget ? { classTarget } : {})}
 		/>
 	);
 }

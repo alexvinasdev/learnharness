@@ -43,7 +43,6 @@ const { readRenderSettings } = await import("../src/store/render-settings.ts");
 const { getGraph, deriveView } = await import("../src/core/graph.ts");
 const { sanitizeRenderSettings } = await import("../src/core/render-settings.ts");
 const { toLlmMessages } = await import("../src/core/native-messages.ts");
-const { phaseAt3Lh } = await import("../src/core/phases.ts");
 const { danglingQuestionOf, activeProblemOf } = await import("../src/core/native-messages.ts");
 
 const TEACH = "chat_mv27rrra_feff23b6";
@@ -78,7 +77,6 @@ test("chats: both fixture records parse through the production read path", () =>
 		assert.ok(r, `${id} reads`);
 		assert.ok(Array.isArray(r!.messages) && r!.messages.length > 0);
 		// the folds the app itself runs per render/turn:
-		assert.equal(typeof phaseAt3Lh(r!.messages), "string", "the phase fold runs clean");
 		assert.equal(danglingQuestionOf(r!.messages), null, "no dangling question tool call");
 		activeProblemOf(r!.messages); // must not throw
 	}

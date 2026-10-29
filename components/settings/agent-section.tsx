@@ -83,13 +83,6 @@ const SLOT_META: Record<ModelSlotName, { label: string; roster: string }> = {
 	vision: { label: "Vision", roster: "The assistants that draw and read PDFs" },
 };
 
-/** The search engines this wave ships (src/core/search.ts) + their labels. */
-const SEARCH_ENGINES = ["tavily", "brave"] as const;
-
-/** The owner's final toggleable-tool list (confirm with the user before
- *  changing — the Teacher stream settled this 2026-09-19). */
-export const TOGGLE_TOOLS = ["research", "demo", "visual", "pdf"] as const;
-
 const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** SegmentInfo as GET /api/settings/prompts returns it. */
@@ -108,29 +101,6 @@ interface ModelsBody {
 	 *  factory floor) — machinery only (the thinking list fallback); the
 	 *  rows' displays read the record override, never a phantom pin. */
 	slots: Record<ModelSlotName, { model: { provider: string; id: string }; thinkingLevel?: string } | null>;
-}
-
-/** Compose: one tool toggled, the rest of the section carried verbatim.
- *  Pure — exported for tests. */
-export function composeTool(agent: AgentSettings | undefined, id: string, on: boolean): AgentSettings {
-	return { ...agent, tools: { ...agent?.tools, [id]: on } };
-}
-
-/** The quizzing mechanics (owner 2026-09-27): a segmented control, not a
- *  toggle — exactly one mechanic is ever active. `explain: true` arms
- *  free-recall (explain in, quiz out); anything else is multiple choice.
- *  `quiz` itself is never written (mechanics-managed — see quizMechanics
- *  in agent/tools.ts). Pure — exported for tests. */
-export function composeQuizMechanics(agent: AgentSettings | undefined, mechanics: "choice" | "free"): AgentSettings {
-	return { ...agent, tools: { ...agent?.tools, explain: mechanics === "free" } };
-}
-
-/** Compose the prober graph-tools toggle (wave 7): its own key in the
- *  agent section — never in the tool-toggles map (owner ruling). Absent =
- *  ON (the toggle discipline); the write is explicit either way, so an
- *  explicit-off record stays visible as stored. Pure — exported for tests. */
-export function composeGraphTools(agent: AgentSettings | undefined, on: boolean): AgentSettings {
-	return { ...agent, graphTools: { enabled: on } };
 }
 
 /** Compose: one slot's model/thinking override. Empty model = absent
@@ -157,21 +127,6 @@ export function composeSlotModel(
 	return next;
 }
 
-/** Compose: the search-engine preference. null = the explicit pin is
- *  REMOVED (auto-activation takes over — the schema's resting state).
- *  Pure — exported for tests. */
-export function composeSearchEngine(
-	agent: AgentSettings | undefined,
-	engine: (typeof SEARCH_ENGINES)[number] | null,
-): AgentSettings {
-	if (engine === null) {
-		if (!agent?.search) return { ...agent };
-		const { search: _drop, ...rest } = agent;
-		return { ...rest } as AgentSettings;
-	}
-	return { ...agent, search: { engine } };
-}
-
 /** The indicator under a row whose override IS the version in use (owner
  *  ruling, refined 2026-09-26: the small text states WHICH VERSION IS
  *  IN USE — "Your version is in use" when the switch is on, and NOTHING
@@ -183,7 +138,7 @@ export const PROMPT_IN_USE_HINT = "Your version is in use";
 /** One section of the prompt view — the owner's ruled order: Teacher,
  *  Prober, then Shared last. */
 export interface PromptSection {
-	id: "teacher" | "prober" | "shared";
+	id: "scoper" | "shared";
 	label: string;
 	/** The one header that earns a hint: "Shared" alone is not
 	 *  self-evident. Teacher/Prober are. */
@@ -199,16 +154,14 @@ export interface PromptSection {
  *  agents' own chunks keep their lists' order — which IS the prompt
  *  assembly order (numeric-prefix filename sort). Pure — exported for
  *  tests. */
-export function sectionedSegments(view: { prober: SegmentInfo[]; teacher: SegmentInfo[] }): PromptSection[] {
-	const own = (who: "prober" | "teacher") => view[who].filter((s) => !s.shared);
+export function sectionedSegments(view: { scoper: SegmentInfo[] }): PromptSection[] {
 	return [
-		{ id: "teacher", label: "Teacher", segments: own("teacher") },
-		{ id: "prober", label: "Prober", segments: own("prober") },
+		{ id: "scoper", label: "Scoper", segments: view.scoper.filter((s) => !s.shared) },
 		{
 			id: "shared",
 			label: "Shared",
-			hint: "Used by both agents",
-			segments: view.teacher.filter((s) => s.shared),
+			hint: "Composed into the scoper's prompt",
+			segments: view.scoper.filter((s) => s.shared),
 		},
 	];
 }
@@ -280,7 +233,6 @@ function MenuTrigger({
 export function AgentSection({
 	agent,
 	models,
-	graph,
 	compaction,
 	onSectionChange,
 	onModelsChange,
@@ -289,10 +241,6 @@ export function AgentSection({
 	agent: AgentSettings | undefined;
 	/** The `models` section (slot pins — engine-level, PUT /api/settings/models). */
 	models: ModelsSettings | undefined;
-	/** The `graph` section — READ ONLY here: the graphTools row composes its
-	 *  master switch (graph.enabled off dims + disables the row; the
-	 *  effective gate is server-side, per-turn fresh). */
-	graph: GraphSettings | undefined;
 	/** The `compaction` section — its own PUT (the threshold is engine
 	 *  behavior, not an agent-section key; owner round 14, Agent tab). */
 	compaction: CompactionSettings | undefined;
@@ -307,25 +255,14 @@ export function AgentSection({
 	/** The three tiers' resolved pins — GET /api/models `slots`. The rows'
 	 *  Default hints and thinking lists resolve from it. */
 	const [slots, setSlots] = useState<ModelsBody["slots"] | null>(null);
-	/** The live search state (/api/search) — the row's reason line. */
-	const [search, setSearch] = useState<{ available: boolean; engine: string | null; reason: string } | null>(null);
-	/** Which search engines have a key (/api/keys) — the no-keys-anywhere
-	 *  state grays the row; per-engine marks ride the menu rows. */
-	const [engineKeys, setEngineKeys] = useState<Partial<Record<(typeof SEARCH_ENGINES)[number], boolean>>>({});
-	const [prompts, setPrompts] = useState<{ prober: SegmentInfo[]; teacher: SegmentInfo[] } | null>(null);
+	const [prompts, setPrompts] = useState<{ scoper: SegmentInfo[] } | null>(null);
 	const [openSegment, setOpenSegment] = useState<string | null>(null);
 	const [segmentDraft, setSegmentDraft] = useState<Record<string, string>>({});
 	const [segmentStatus, setSegmentStatus] = useState<string | null>(null);
 	/** One open dropdown for the whole section: which slot (or the search
 	 *  row), which kind. */
-	const [openMenu, setOpenMenu] = useState<{ target: ModelSlotName | "search"; kind: "model" | "thinking" | "engine" } | null>(null);
+	const [openMenu, setOpenMenu] = useState<{ target: ModelSlotName; kind: "model" | "thinking" } | null>(null);
 	const menuAnchorRef = useRef<HTMLSpanElement>(null);
-
-	const refreshSearch = () =>
-		fetch("/api/search")
-			.then((r) => r.json())
-			.then((body: { available: boolean; engine: string | null; reason: string }) => setSearch(body))
-			.catch(() => setSearch(null));
 
 	/** Re-read the prompt-segment view — the signal seam for the
 	 *  2026-09-26 state-echo fix: the view's `enabled` flags DERIVE from
@@ -337,15 +274,14 @@ export function AgentSection({
 	const readPrompts = useCallback(() => {
 		fetch("/api/settings/prompts")
 			.then((r) => r.json())
-			.then((body: { prober: SegmentInfo[]; teacher: SegmentInfo[] }) => setPrompts(body))
+			.then((body: { scoper: SegmentInfo[] }) => setPrompts(body))
 			.catch(() => {});
 	}, []);
 
 	// The catalog (federated: keyed providers only), the resolved slots,
-	// the prompt segments, and the search engines' key presence — one
-	// fetch each per section mount. The models read ALSO re-runs on the
-	// cross-surface signal (fix wave: another surface's write re-reads
-	// into the slot rows live).
+	// the prompt segments — one fetch each per section mount. The models
+	// read ALSO re-runs on the cross-surface signal (fix wave: another
+	// surface's write re-reads into the slot rows live).
 	const modelsRequest = useRef(0);
 	const modelsMounted = useRef(false);
 	const readModels = useCallback((connectionChanged = false) => {
@@ -375,29 +311,10 @@ export function AgentSection({
 		readModels();
 		fetch("/api/settings/prompts")
 			.then((r) => r.json())
-			.then((body: { prober: SegmentInfo[]; teacher: SegmentInfo[] }) => setPrompts(body))
+			.then((body: { scoper: SegmentInfo[] }) => setPrompts(body))
 			.catch(() => setPrompts(null));
-		fetch("/api/keys")
-			.then((r) => r.json())
-			.then((body: { keys: { id: string; present: boolean }[] }) => {
-				const present: Partial<Record<(typeof SEARCH_ENGINES)[number], boolean>> = {};
-				for (const id of SEARCH_ENGINES) {
-					const envVar = id === "tavily" ? "TAVILY_API_KEY" : "BRAVE_API_KEY";
-					present[id] = body.keys.some((k) => k.id === envVar && k.present);
-				}
-				setEngineKeys(present);
-			})
-			.catch(() => {});
 		return () => { modelsMounted.current = false; modelsRequest.current++; };
 	}, []);
-
-	// The reason line re-reads /api/search AFTER an engine write lands —
-	// the write updates the `agent` prop (the dialog's record mirror), so
-	// keying on the pin avoids the race where the fetch beat the PUT and
-	// the hint contradicted the trigger it sits under.
-	useEffect(() => {
-		refreshSearch();
-	}, [agent?.search?.engine]);
 
 	// The dropdown contract (the chat model selector's, mirrored): any
 	// click outside the open menu — or an Esc — closes it. Esc is CLAIMED
@@ -473,30 +390,6 @@ export function AgentSection({
 		setSegmentStatus("Deleted");
 	}
 
-		/** The search-engine menu row — label + the quiet live-key mark. */
-	const engineOption = (
-		id: (typeof SEARCH_ENGINES)[number] | "auto",
-		label: string,
-		active: boolean,
-		live: boolean | null,
-		onPick: () => void,
-	) => (
-		<button
-			key={id}
-			type="button"
-			data-testid={`engine-option-${id}`}
-			onClick={onPick}
-			className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted ${
-				active ? "bg-muted/60 text-card-foreground" : "text-card-foreground"
-			}`}
-		>
-			<span>{label}</span>
-			<span className="text-muted-foreground">
-				{live === null ? (active && <span aria-hidden>✓</span>) : live ? <span aria-hidden>✓ key</span> : <span aria-hidden>· no key</span>}
-			</span>
-		</button>
-	);
-
 	const segmentRow = (info: SegmentInfo) => {
 		const fileExists = info.overrideText !== null;
 		const open = openSegment === info.path;
@@ -547,6 +440,7 @@ export function AgentSection({
 						<div>
 							<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">Source</p>
 							<textarea
+					suppressHydrationWarning /* grammar-checker extensions stamp inputs pre-hydration (2026-11) */
 								readOnly
 								value={info.sourceText}
 								aria-label="The original instructions"
@@ -556,6 +450,7 @@ export function AgentSection({
 						<div>
 							<p className="mb-1 text-xs uppercase tracking-widest text-muted-foreground/70">Override</p>
 							<textarea
+					suppressHydrationWarning
 								value={segmentDraft[info.path] ?? info.overrideText ?? ""}
 								onChange={(e) => setSegmentDraft({ ...segmentDraft, [info.path]: e.target.value })}
 								aria-label="Your version of the instructions"
@@ -721,132 +616,6 @@ export function AgentSection({
 						</SettingsRow>
 					);
 				})}
-			</SettingsGroup>
-
-			<SettingsGroup label="Tools" testid="group-tools">
-				{/* The prober's graph tools (wave 7, owner ruling 2026-09-23):
-				    FIRST row of the group — its subject is the map, its
-				    mechanism is agent capability, so it lives in Tools but
-				    NOT in the tool-toggles list. Its own agent-section key
-				    (agent.graphTools), the search-row hint discipline: a
-				    smaller line under it explaining what it is — this
-				    connects prior sessions' knowledge into new ones. */}
-				{(() => {
-					const graphOn = graph?.enabled ?? true;
-					return (
-						<SettingsRow
-							label="Graph tools"
-							hint={graphOn ? "Lets the tutor consult your knowledge map between sessions" : "Graph is disabled"}
-							testid="graph-tools-row"
-							dimmed={!graphOn}
-						>
-							<Toggle
-								checked={agent?.graphTools?.enabled ?? true}
-								disabled={!graphOn}
-								label="graph tools"
-								onChange={(on) => onSectionChange(composeGraphTools(agent, on))}
-							/>
-						</SettingsRow>
-					);
-				})()}
-				{/* The quizzing mechanic (owner 2026-09-27): segmented — exactly one
-				    of Multiple choice / Free recall is active; the choice swaps which
-				    quizzing tool BOTH agents carry (prober checks + teach checks).
-				    Persisted as agent.tools.explain; absent = Multiple choice. */}
-				{(() => {
-					const free = agent?.tools?.explain === true;
-					return (
-						<SettingsRow
-							label="Quizzing"
-							hint="How both tutors check your understanding"
-							testid="quiz-mechanics-row"
-						>
-							<div
-								role="radiogroup"
-								aria-label="Quizzing mechanics"
-								className="flex rounded-lg border border-border/60 bg-muted/30 p-0.5"
-								>
-								{(["choice", "free"] as const).map((m) => {
-									const active = m === "free" ? free : !free;
-									return (
-										<button
-											key={m}
-											type="button"
-											role="radio"
-											aria-checked={active}
-											data-testid={`quiz-mechanics-${m}`}
-											onClick={() => onSectionChange(composeQuizMechanics(agent, m))}
-											className={cn(
-												"h-8 rounded-md px-3 text-sm font-medium transition-colors",
-												active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-											)}
-										>
-											{m === "choice" ? "Multiple choice" : "Free recall"}
-										</button>
-									);
-								})}
-							</div>
-						</SettingsRow>
-					);
-				})()}
-				{TOGGLE_TOOLS.map((id) => (
-					<SettingsRow
-						key={id}
-						label={`Tool · ${id}`}
-						testid={`tool-row-${id}`}
-					>
-						<Toggle
-							checked={agent?.tools?.[id] ?? true}
-							label={`tool ${id}`}
-							onChange={(on) => onSectionChange(composeTool(agent, id, on))}
-						/>
-					</SettingsRow>
-				))}
-				{(() => {
-					const engine = agent?.search?.engine ?? null;
-					const anyKey = engineKeys.tavily === true || engineKeys.brave === true;
-					const open = openMenu?.target === "search";
-					return (
-						<SettingsRow
-							label="Search engine"
-							hint={search?.reason ?? undefined}
-							testid="search-engine-row"
-							dimmed={!anyKey}
-						>
-							<span ref={open ? menuAnchorRef : undefined} className="relative flex items-center gap-2">
-								<MenuTrigger
-									value={engine === "tavily" ? "Tavily" : engine === "brave" ? "Brave" : ""}
-									emptyLabel="Automatic"
-									ariaLabel="Search engine"
-									testid="search-engine-trigger"
-									open={open}
-									onClick={() => setOpenMenu(open ? null : { target: "search", kind: "engine" })}
-									widthClass="min-w-20"
-									disabled={!anyKey}
-								/>
-								{open && (
-									<MenuShell
-										preferredSide="down"
-											anchorTestid="search-engine-trigger"
-										testid="search-engine-menu"
-										menuClass="flex w-44 flex-col gap-0.5 rounded-xl border border-border bg-card p-2 text-xs shadow-xl"
-									>
-										{engineOption("auto", "Automatic", engine === null, null, () => {
-											onSectionChange(composeSearchEngine(agent, null));
-											setOpenMenu(null);
-										})}
-										{SEARCH_ENGINES.map((id) =>
-											engineOption(id, id === "tavily" ? "Tavily" : "Brave", engine === id, engineKeys[id] ?? false, () => {
-												onSectionChange(composeSearchEngine(agent, id));
-												setOpenMenu(null);
-											}),
-										)}
-									</MenuShell>
-								)}
-							</span>
-						</SettingsRow>
-					);
-				})()}
 			</SettingsGroup>
 
 			<SettingsGroup label="Context" testid="group-context">

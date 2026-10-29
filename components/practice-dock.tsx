@@ -122,6 +122,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 					YOUR THINKING
 				</div>
 				<textarea
+					suppressHydrationWarning /* grammar-checker extensions stamp inputs pre-hydration (2026-11) */
 					value={thinking}
 					onChange={(e) => {
 						thinkingRef.current = e.target.value;
