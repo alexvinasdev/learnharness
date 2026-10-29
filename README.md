@@ -9,17 +9,16 @@
 <p align="center"><strong>An agent harness for learning.</strong></p>
 
 <p align="center">
-  <a href="https://learnharness.ai">Download</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="docs/development.md">Documentation</a> ·
-  <a href="https://github.com/amosblomqvist/learnharness/issues">Issues</a>
+  <a href="https://github.com/alexvinasdev/learnharness/issues">Issues</a>
 </p>
+
+> A fork of [amosblomqvist/learnharness](https://github.com/amosblomqvist/learnharness), restructured around a persistent **scope**, deterministic exercises, and a zero-token practice loop. The original's teaching and practice sessions are retired here; the knowledge graph and the chat interface remain.
 
 LearnHarness uses AI to interview you into a persistent **scope** — the weighted topic tree of what you want to learn — then turns each leaf into a cheatsheet (the lesson) and a batch of exercises. A **class** walks the tree with you; the grind loop measures what you actually retain, deterministically, without a model in the loop.
 
-Instead of just giving you an explanation, it uses your answers and thinking to decide what you need next. Teaching builds understanding one reasoning step at a time. Practice makes it usable. A persistent knowledge graph carries it across sessions.
-
-![LearnHarness teaching session](docs/assets/teaching-session.png)
+![LearnHarness class session](docs/assets/teaching-session.png)
 
 ## How it works
 
@@ -31,53 +30,40 @@ Instead of just giving you an explanation, it uses your answers and thinking to 
 
 ## The knowledge graph
 
-What you are taught still accumulates as propositions and reasoning chains — individual claims and the premises that lead to them — with links back to the sessions and topics that produced them. You can also import notes. The graph remains inspectable; with teaching sessions retired (2026-02), it grows through imports and earlier sessions.
+What you learn still accumulates as propositions and reasoning chains — individual claims and the premises that lead to them — with links back to the sessions and topics that produced them. You can also import notes. Cheatsheets draw on the graph; it stays inspectable, and it carries what you know across every session and import.
+
+![LearnHarness knowledge graph](docs/assets/knowledge-graph.png)
 
 **Think out loud.** The thinking fields let you explain your reasoning, uncertainties, and reactions in your own words. You can type or use dictation.
 
 The agent can also research questions in the background, create visual explanations, and build interactive demonstrations.
 
-## Knowledge that carries forward
+## Run from source
 
-What you are taught accumulates as propositions and reasoning chains: individual claims and the premises that lead to them. The graph shows this structure, with links back to the source sessions. You can also import notes.
+This fork ships no prebuilt downloads — run it locally:
 
-Future teaching sessions can read the graph instead of starting from scratch. Practice sessions can draw their material from it. It stores the ideas and their connections, not ratings of your ability.
+```bash
+npm install
+npm run dev          # http://localhost:3000
+npm run desktop:dev  # Electron shell around the dev server
+npm test             # deterministic, no LLM, no network
+```
 
-![LearnHarness knowledge graph](docs/assets/knowledge-graph.png)
-
-## Download and get started
-
-**[Download from learnharness.ai](https://learnharness.ai)** · [GitHub Releases](https://github.com/amosblomqvist/learnharness/releases)
-
-- **macOS (Apple Silicon):** signed and notarized DMG. Drag the app to Applications.
-- **Windows (x64):** run the installer. It is currently unsigned; Windows may show an “unknown publisher” or SmartScreen warning.
-- **Linux (x64):** make the AppImage executable and open it, or install the Debian/Ubuntu `.deb`.
-
-Add your provider API key and choose your models, then start a session with what you want to understand. LearnHarness supports 30+ provider options, including OpenAI, Anthropic, Google, DeepSeek, and OpenRouter. Optional dictation and web search use separate service keys.
-
-All three platforms support in-app updates.
+Add your provider API key and choose your models, then start a scope session with what you want to learn. LearnHarness supports 30+ provider options, including OpenAI, Anthropic, Google, DeepSeek, and OpenRouter. Optional dictation and web search use separate service keys.
 
 ## Your keys, your data
 
-- **Your keys and models.** No LearnHarness subscription or markup. You pay your providers for usage; a live cost meter shows model costs.
-- **Local storage.** Your chats, graph, settings, and API keys live on your machine. Learning records are plain files you can inspect.
+- **Your keys and models.** No subscription, no markup. You pay your providers for usage; a live cost meter shows model costs.
+- **Local storage.** Your scopes, chats, graph, settings, and API keys live on your machine. Learning records are plain files you can inspect.
 - **External services.** Models run through your configured providers. Model requests send the context needed for the task; web research and dictation also contact external services. Local storage does not mean offline processing.
 - **Inspectable behavior.** System prompts are visible and editable. The app is open source under the AGPL-3.0 license.
 
 ## Development and support
 
-```bash
-npm install
-npm run dev        # http://localhost:3000
-npm test           # deterministic, no LLM, no network
-```
-
 See the [development guide](docs/development.md), [architecture](docs/architecture.md), and [desktop release guide](docs/desktop-release.md).
 
-Questions, bug reports, and feature requests: [GitHub Issues](https://github.com/amosblomqvist/learnharness/issues).
+Questions, bug reports, and feature requests: [GitHub Issues](https://github.com/alexvinasdev/learnharness/issues).
 
 ## License
 
-[AGPL-3.0](LICENSE)
-
-The app is free and open forever. If we ever charge for anything, it will be for convenience — managed keys, hosting — never for features you can run locally.
+[AGPL-3.0](LICENSE), same as the original.
